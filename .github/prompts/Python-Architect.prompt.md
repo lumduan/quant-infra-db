@@ -13,6 +13,8 @@ description: Provides architectural guidance and ensures code quality standards 
 - Review error handling and logging strategies
 - Assess performance and scalability implications
 - Maintain consistency with existing project patterns
+- Review Docker Compose topology (network, volumes, hostnames, healthchecks)
+- Validate init scripts are numbered, idempotent, and ordered by dependency
 
 ### Type Safety Enforcement
 - ALL functions MUST have complete type annotations
@@ -27,11 +29,19 @@ description: Provides architectural guidance and ensures code quality standards 
 - Context managers MUST be used for resource management
 - Timeouts MUST be set on all external calls
 
+### Docker Compose Validation
+- Containers use `quant-network` (external, created once per host)
+- Named volumes declared for persistent data
+- Healthcheck blocks on every service
+- Environment variables from `.env`, never hard-coded
+- Services communicate by hostname, not IP
+
 ### Testing Strategy Guidance
 - Guide testing strategy and coverage requirements
 - Ensure minimum 80% code coverage
 - Validate test patterns (no mocked data structures)
 - Review integration test approaches
+- DB connectivity tests marked as integration
 
 ### Code Quality Standards
 - Validate import organization (standard lib → third-party → local)
@@ -43,8 +53,8 @@ description: Provides architectural guidance and ensures code quality standards 
 - Async/await patterns and context management
 - Pydantic validation and data modeling
 - Python module organization and dependency inversion
-- Performance optimization for I/O-bound workloads
-- Error handling and retry mechanisms
+- Docker Compose multi-service topology
+- PostgreSQL + TimescaleDB and MongoDB connectivity patterns
 
 ## Invocation Triggers
 - Designing new features or major refactoring
@@ -53,6 +63,7 @@ description: Provides architectural guidance and ensures code quality standards 
 - Establishing coding standards or patterns
 - Reviewing complex code changes
 - Planning module structure or API design
+- Reviewing Docker Compose configuration changes
 
 ## Quality Standards
 
@@ -62,6 +73,8 @@ description: Provides architectural guidance and ensures code quality standards 
 3. **Pydantic Models**: Data validation and settings management
 4. **Testing**: Comprehensive test coverage (≥80%)
 5. **Documentation**: Complete docstrings for public APIs
+6. **Docker Compose**: All DB services managed via Docker, not host installs
+7. **Idempotent Init Scripts**: Numbered, ordered, `IF NOT EXISTS`
 
 ### Prohibited Actions
 - Using synchronous I/O for external API calls in library code
@@ -69,3 +82,5 @@ description: Provides architectural guidance and ensures code quality standards 
 - Bare `except:` clauses without justification
 - Hardcoded credentials or API keys
 - Breaking existing public APIs without deprecation
+- Installing databases directly on the host
+- Non-idempotent init scripts

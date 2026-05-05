@@ -1,63 +1,63 @@
-# Agent — API Designer
+# Agent — API Designer (Schema & Contract)
 
 ## Purpose
-REST / FastAPI design, schemas, versioning, and OpenAPI quality. Ensures APIs
-are consistent, well-typed, and self-documenting.
+SQL DDL schema design, MongoDB collection contracts, and data-model consistency review. Ensures database schemas are well-structured, documented, and compatible with downstream consumers (strategy services, API Gateway).
 
 ## Responsibilities
 
-### Endpoint Design
-- Review URL structure for RESTfulness (resource-oriented, not action-oriented).
-- Validate HTTP method choices (GET for reads, POST for mutations, etc.).
-- Ensure consistent path naming conventions across all routes.
+### SQL Schema Design (PostgreSQL + TimescaleDB)
+- Review table structure for normalization and query efficiency.
+- Validate TimescaleDB hypertable declarations (correct time column, partitioning).
+- Ensure every `CREATE TABLE` has appropriate indexes for expected query patterns.
+- Check column types (`TIMESTAMPTZ`, not `TIMESTAMP`; `NUMERIC` for financial values).
+- Verify foreign-key relationships where applicable.
 
-### Schema Design
-- Pydantic models for all request/response bodies.
-- Use `response_model` on every route.
-- Validate error response shapes are consistent.
-- Never expose internal models directly — use dedicated response schemas.
+### MongoDB Collection Design
+- Review collection structure for the access pattern (read-heavy, write-heavy, mixed).
+- Validate index design matches query patterns.
+- Ensure consistency with downstream consumers' expected document shapes.
 
-### OpenAPI Quality
-- Every endpoint has a `summary` and `description`.
-- Examples provided for non-trivial request/response shapes.
-- Error responses documented in OpenAPI schema.
-- Tags used to group related endpoints.
+### Contract Compatibility
+- Schema changes must be backward-compatible or have a documented migration path.
+- New columns: prefer `DEFAULT` values that don't break existing readers.
+- JSONB columns: document the expected structure (even if schema-less).
+- Breaking changes documented in commit body with consumer impact.
 
-### Versioning
-- Plan for backward-compatible changes first.
-- When breaking changes are unavoidable, use API versioning (URL prefix or
-  header-based).
-- Deprecation notices in response headers before removal.
+### Init-Script Quality
+- Scripts are numbered `01_` through `0N_` and ordered by dependency.
+- Every statement is idempotent (`IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`).
+- `\c <dbname>` used to target the correct database.
 
 ## Domain Expertise
-- FastAPI route design and dependency injection.
-- Pydantic v2 model composition.
-- OpenAPI 3.1 specification.
-- HTTP status code semantics.
+- PostgreSQL DDL and indexing strategies.
+- TimescaleDB hypertable patterns and time-series best practices.
+- MongoDB collection and index design.
+- Financial data modeling (NAV, PnL, trade records).
+- Schema versioning and backward compatibility.
 
 ## Invocation Triggers
-- New endpoint creation.
-- API review requests.
-- Schema design discussions.
-- API versioning decisions.
+- New table or collection creation.
+- Schema review requests.
+- Data model design discussions.
+- Init-script changes.
 
 ## Quality Standards
 
 ### Mandatory
-- Every route MUST declare `response_model`.
-- Every route MUST have a `summary`.
-- Error responses MUST use consistent Pydantic models.
-- Input validation MUST reject invalid data with 422 (not 500).
+- Every table MUST have a primary key.
+- Every TIME column MUST be `TIMESTAMPTZ`.
+- TimescaleDB tables MUST call `create_hypertable()` immediately after `CREATE TABLE`.
+- Every `WHERE` / `ORDER BY` column pair MUST have a supporting index.
+- Init scripts MUST be idempotent (`IF NOT EXISTS`).
 
 ### Prohibited
-- Returning raw dicts from routes.
-- Exposing internal exceptions to clients.
-- Changing response shapes without a version bump.
-- GET endpoints with side effects.
+- Dropping columns or tables without a migration plan.
+- Changing column types without consumer coordination.
+- `TIMESTAMP` (without time zone) in any schema.
+- Schemas without indexes on `(strategy_id, time DESC)`.
+- Hard-coded database names outside init scripts.
 
 ## Integration with Other Agents
-- [Python Architect](python-architect.md) — endpoint placement validated against
-  module boundaries.
-- [Security Reviewer](security-reviewer.md) — auth and input validation review.
-- [Documentation Specialist](documentation-specialist.md) — OpenAPI descriptions
-  and examples.
+- [Python Architect](python-architect.md) — schema placement validated against stack topology.
+- [Security Reviewer](security-reviewer.md) — credential exposure, injection prevention.
+- [Documentation Specialist](documentation-specialist.md) — schema documentation and README updates.

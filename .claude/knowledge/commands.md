@@ -37,7 +37,22 @@ Canonical commands. Every Python invocation is prefixed with `uv run`.
 | Run a script | `uv run python scripts/<name>.py` |
 | Run an example | `uv run python examples/<name>.py` |
 
-## Docker
+## Docker Compose (database stack)
+
+| Task | Command |
+|---|---|
+| Start the stack | `docker compose up -d` |
+| Stop the stack | `docker compose down` |
+| Check status | `docker compose ps` |
+| View logs | `docker compose logs -f` |
+| Restart a service | `docker compose restart <postgres\|mongodb>` |
+| psql into postgres | `docker exec -it quant-postgres psql -U postgres` |
+| mongosh into mongo | `docker exec -it quant-mongo mongosh` |
+| Create network (once) | `docker network create quant-network` |
+| Backup databases | `bash scripts/backup.sh` |
+| Rebuild after init-script change | `docker compose down -v && docker compose up -d` |
+
+## Docker (Python app, when applicable)
 
 | Task | Command |
 |---|---|

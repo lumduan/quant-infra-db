@@ -21,6 +21,7 @@ applyTo: '**'
 - `chore`: Maintenance, deps, config
 - `build`: Build system changes
 - `ci`: CI/CD changes
+- `infra`: Docker Compose, init-script, and database infrastructure changes
 
 ### Prohibited Actions
 
@@ -34,3 +35,5 @@ applyTo: '**'
 8. **NEVER** use synchronous I/O for external API calls in library code
 9. **NEVER** commit `.env` files or secrets
 10. **NEVER** mix refactor and feature in a single commit
+11. **NEVER** commit non-idempotent init scripts
+12. **NEVER** commit `docker-compose.yml` changes without verifying `docker compose up -d` works

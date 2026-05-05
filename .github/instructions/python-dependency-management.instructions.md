@@ -21,3 +21,9 @@ applyTo: '**'
 - Question every new dependency: is the import worth the supply-chain risk?
 - Run `uv pip audit` to check for known CVEs before merging.
 - Pin to exact versions in `pyproject.toml` only with a documented reason.
+- DB driver dependencies (`psycopg2`, `pymongo`) are load-bearing — review upgrades carefully and always run connectivity smoke tests after upgrading them.
+
+**Non-Python Dependencies:**
+
+- Docker images (PostgreSQL, TimescaleDB, MongoDB) are pinned in `docker-compose.yml` — treat version bumps with the same care as Python dependency upgrades.
+- TimescaleDB version must be compatible with the PostgreSQL major version. Check the TimescaleDB release notes before bumping.

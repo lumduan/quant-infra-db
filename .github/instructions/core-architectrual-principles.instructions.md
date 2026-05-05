@@ -15,7 +15,7 @@ applyTo: '**'
 2. **Async-First Architecture is REQUIRED**:
    - ALL I/O operations MUST use async/await patterns
    - ALL HTTP clients MUST be async (`httpx`, not `requests`)
-   - ALL database operations SHOULD be async
+   - ALL database operations SHOULD be async (use `asyncpg` over `psycopg2` for new async code)
    - Context managers MUST be used for resource management
 
 3. **Pydantic Integration is MANDATORY**:
@@ -30,6 +30,14 @@ applyTo: '**'
    - ALL errors MUST be logged with structured data
    - User-facing error messages MUST be helpful and actionable
 
+5. **Docker Compose Infrastructure**:
+   - Database services (PostgreSQL, MongoDB) MUST be managed via `docker compose`
+   - NEVER install databases directly on the host
+   - ALL containers MUST have healthcheck blocks
+   - ALL containers MUST join the shared `quant-network`
+   - Environment variables for credentials MUST come from `.env` (gitignored)
+   - Init scripts MUST be numbered, ordered by dependency, and idempotent (`IF NOT EXISTS`)
+
 ### Mandatory Pre-Work Validation
 
 Before making ANY changes:
@@ -37,7 +45,7 @@ Before making ANY changes:
 1. **ALWAYS** read the current file contents completely before editing
 2. **ALWAYS** run existing tests to ensure no regressions: `uv run pytest -v`
 3. **ALWAYS** check git status and current branch before making changes
-4. **ALWAYS** validate that your changes align with the project architecture
+4. **ALWAYS** validate that your changes align with the project roadmap (`docs/plans/ROADMAP.md`)
 
 ### Import Organization (MANDATORY):
 

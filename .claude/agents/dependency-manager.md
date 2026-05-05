@@ -1,8 +1,7 @@
 # Agent — Dependency Manager
 
 ## Purpose
-uv package management, dependency updates, and environment setup. All
-dependency operations go through `uv`.
+uv package management, dependency updates, and environment setup. All dependency operations go through `uv`.
 
 ## Responsibilities
 
@@ -15,7 +14,7 @@ dependency operations go through `uv`.
 ### Upgrades
 - Single package: `uv lock --upgrade-package <pkg> && uv sync`.
 - All packages: `uv lock --upgrade && uv sync`.
-- Major upgrades on load-bearing deps get their own focused PR.
+- Major upgrades on load-bearing deps (`psycopg2`, `pymongo`, `httpx`, `pydantic`) get their own focused PR.
 
 ### Environment Health
 - Verify `uv sync` produces a clean environment.
@@ -26,8 +25,8 @@ dependency operations go through `uv`.
 ### Dependency Hygiene
 - Prefer stdlib over third-party where adequate.
 - Question new dependencies: is the import worth the supply-chain risk?
-- Pin only when there's a documented reason; let `uv.lock` provide
-  reproducibility.
+- Pin only when there's a documented reason; let `uv.lock` provide reproducibility.
+- DB driver dependencies (`psycopg2`, `pymongo`) are load-bearing — review upgrades carefully.
 
 ## Domain Expertise
 - uv resolver and lockfile mechanics.
@@ -57,7 +56,5 @@ dependency operations go through `uv`.
 
 ## Integration with Other Agents
 - [Security Reviewer](security-reviewer.md) — CVE checks on dependency changes.
-- [Release Manager](release-manager.md) — version bumps and lockfile hygiene
-  before release.
-- [Git Commit Reviewer](git-commit-reviewer.md) — conventional commit format
-  for dependency updates.
+- [Release Manager](release-manager.md) — version bumps and lockfile hygiene before release.
+- [Git Commit Reviewer](git-commit-reviewer.md) — conventional commit format for dependency updates.

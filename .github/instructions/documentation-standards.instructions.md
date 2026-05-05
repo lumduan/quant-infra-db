@@ -15,7 +15,12 @@ Ensures comprehensive documentation standards and maintains consistency across t
 - Document exceptions and error conditions
 - Maintain consistency in documentation style across modules
 
-### API Documentation
+### Init-Script Documentation
+- Every init script MUST have a header comment explaining its purpose and order dependency
+- SQL blocks SHOULD have inline comments where the purpose isn't obvious from the table/column name
+- MongoDB init scripts SHOULD document the expected document shape for each collection
+
+### API Documentation (when applicable)
 - Create and maintain comprehensive API documentation
 - Ensure all public interfaces are properly documented
 - Validate code examples in documentation
@@ -26,6 +31,7 @@ Ensures comprehensive documentation standards and maintains consistency across t
 - Ensure documentation reflects current implementation
 - Check for outdated or deprecated information
 - Validate cross-references and links
+- Keep `docs/plans/ROADMAP.md` status up to date
 
 ### Example Creation
 - Create realistic usage examples for complex functions
@@ -66,6 +72,7 @@ async def example_function(
 
 ### Documentation Requirements
 - ALL public functions MUST have comprehensive docstrings
+- ALL init scripts MUST have header comments
 - Include parameter descriptions with types and constraints
 - Include return value descriptions with expected types
 - Include usage examples for complex functions

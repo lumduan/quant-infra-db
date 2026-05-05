@@ -1,0 +1,403 @@
+# quant-infra-db — Roadmap
+
+The `infra-db` project is the database infrastructure layer for the entire Quant Trading system.
+It runs **PostgreSQL + TimescaleDB** and **MongoDB** through Docker Compose
+on a shared Docker network `quant-network`, so every Strategy Service and the API Gateway can connect to it.
+
+---
+
+## Status legend
+
+| Symbol | Meaning |
+|---|---|
+| `[ ]` | Not started |
+| `[~]` | In progress |
+| `[x]` | Complete |
+| `[-]` | Skipped / deferred |
+
+---
+
+## Phase 1 — Project Bootstrap 🏗️
+
+> **Goal:** Set up the project skeleton and the base Docker Compose stack so that `docker compose up -d` works on a fresh clone with no extra configuration.
+
+### 1.1 Project structure
+
+- [ ] Create the project folder `infra-db/`
+- [ ] Create `README.md` describing the overview, install steps, and connection strings
+- [ ] Create `.env.example` — template for credentials (no real values)
+- [ ] Create `.gitignore`:
+  - Do not commit the real `.env`
+  - Do not commit `backups/`
+- [ ] Push the project to GitHub (private repository)
+
+**Exit criteria:** project skeleton is complete; no real credentials are present in the repository.
+
+### 1.2 Docker Compose — Core services
+
+- [ ] Create `docker-compose.yml` with the core services:
+  ```yaml
+  services:
+    postgres:
+      image: timescale/timescaledb:latest-pg16
+      container_name: quant-postgres
+      restart: always
+      environment:
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ports:
+        - "5432:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+        - ./init-scripts:/docker-entrypoint-initdb.d
+
+    mongodb:
+      image: mongo:latest
+      container_name: quant-mongo
+      restart: always
+      ports:
+        - "27017:27017"
+      volumes:
+        - mongo_data:/data/db
+        - ./init-scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+
+  volumes:
+    postgres_data:
+    mongo_data:
+  ```
+- [ ] Verify: `docker compose up -d` → both containers start with no error
+
+**Exit criteria:** `docker compose ps` shows `postgres` and `mongodb` with status `Up`.
+
+### 1.3 Docker network `quant-network`
+
+- [ ] Create the external network before running compose:
+  ```bash
+  docker network create quant-network
+  ```
+- [ ] Add network configuration to `docker-compose.yml` so every container joins `quant-network`:
+  ```yaml
+  networks:
+    default:
+      name: quant-network
+      external: true
+  ```
+- [ ] Document the network creation command in `README.md` (one-time setup per host)
+- [ ] Verify: a container in another service can ping `quant-postgres` and `quant-mongo` by hostname
+
+**Exit criteria:** containers communicate via hostname; no IP address required.
+
+---
+
+## Phase 2 — PostgreSQL & TimescaleDB Setup 🐘
+
+> **Goal:** Create per-service logical databases with the TimescaleDB extension enabled and an initial schema.
+
+### 2.1 Create logical databases
+
+- [ ] Create init script `init-scripts/01_create_databases.sql`:
+  ```sql
+  CREATE DATABASE db_csm_set;
+  CREATE DATABASE db_gateway;
+  ```
+- [ ] Verify: `docker exec -it quant-postgres psql -U postgres -l`
+  → both `db_csm_set` and `db_gateway` appear in the list
+
+**Exit criteria:** both databases are created automatically after `docker compose up`.
+
+### 2.2 Enable the TimescaleDB extension
+
+- [ ] Create init script `init-scripts/02_enable_timescaledb.sql`:
+  ```sql
+  \c db_csm_set
+  CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+  \c db_gateway
+  CREATE EXTENSION IF NOT EXISTS timescaledb;
+  ```
+- [ ] Verify: `SELECT extname, extversion FROM pg_extension WHERE extname = 'timescaledb';`
+  inside both `db_csm_set` and `db_gateway`
+- [ ] Record the TimescaleDB version in `README.md`
+
+**Exit criteria:** the `timescaledb` extension is available in both databases.
+
+### 2.3 Schema for `db_csm_set`
+
+- [ ] Create init script `init-scripts/03_schema_csm_set.sql`
+- [ ] Table `equity_curve` — daily NAV per strategy:
+  ```sql
+  \c db_csm_set
+
+  CREATE TABLE equity_curve (
+      time        TIMESTAMPTZ NOT NULL,
+      strategy_id TEXT        NOT NULL,
+      nav         NUMERIC     NOT NULL
+  );
+  SELECT create_hypertable('equity_curve', 'time');
+  CREATE INDEX ON equity_curve (strategy_id, time DESC);
+  ```
+- [ ] Table `trade_history` — every trade record:
+  ```sql
+  CREATE TABLE trade_history (
+      id          SERIAL      PRIMARY KEY,
+      time        TIMESTAMPTZ NOT NULL,
+      strategy_id TEXT        NOT NULL,
+      symbol      TEXT        NOT NULL,
+      side        TEXT        NOT NULL,   -- 'BUY' or 'SELL'
+      quantity    NUMERIC     NOT NULL,
+      price       NUMERIC     NOT NULL,
+      commission  NUMERIC     DEFAULT 0
+  );
+  CREATE INDEX ON trade_history (strategy_id, time DESC);
+  ```
+- [ ] Table `backtest_log` — metadata for each backtest run:
+  ```sql
+  CREATE TABLE backtest_log (
+      id          SERIAL      PRIMARY KEY,
+      run_id      TEXT        UNIQUE NOT NULL,
+      strategy_id TEXT        NOT NULL,
+      started_at  TIMESTAMPTZ NOT NULL,
+      finished_at TIMESTAMPTZ,
+      config      JSONB,      -- parameters used for the run
+      summary     JSONB       -- sharpe, cagr, max_drawdown, etc.
+  );
+  ```
+- [ ] Verify: insert sample rows → queries return them correctly
+
+**Exit criteria:** schema is in place; `equity_curve` is a TimescaleDB hypertable.
+
+### 2.4 Schema for `db_gateway`
+
+- [ ] Create init script `init-scripts/04_schema_gateway.sql`
+- [ ] Table `daily_performance` — daily performance from every strategy:
+  ```sql
+  \c db_gateway
+
+  CREATE TABLE daily_performance (
+      time         TIMESTAMPTZ NOT NULL,
+      strategy_id  TEXT        NOT NULL,
+      daily_pnl    NUMERIC,
+      total_value  NUMERIC,
+      cash_balance NUMERIC,
+      max_drawdown NUMERIC,
+      sharpe_ratio NUMERIC,
+      metadata     JSONB       -- strategy-specific extras
+  );
+  SELECT create_hypertable('daily_performance', 'time');
+  CREATE INDEX ON daily_performance (strategy_id, time DESC);
+  ```
+- [ ] Table `portfolio_snapshot` — combined snapshot across all strategies for a given date:
+  ```sql
+  CREATE TABLE portfolio_snapshot (
+      time              TIMESTAMPTZ NOT NULL,
+      total_portfolio   NUMERIC     NOT NULL,
+      weighted_return   NUMERIC,
+      combined_drawdown NUMERIC,
+      active_strategies INTEGER,
+      allocation        JSONB       -- weight per strategy
+  );
+  SELECT create_hypertable('portfolio_snapshot', 'time');
+  ```
+- [ ] Verify: insert rows from two strategies → cross-strategy aggregation queries return the expected results
+
+**Exit criteria:** schema is in place; aggregation across multiple strategies works.
+
+---
+
+## Phase 3 — MongoDB Setup 🍃
+
+> **Goal:** Provision schema-less MongoDB collections for logs, model parameters, and backtest results.
+
+### 3.1 Create collections and indexes
+
+- [ ] Create init script `init-scripts/mongo-init.js`:
+  ```javascript
+  // Database for the CSM-SET strategy
+  db = db.getSiblingDB('csm_logs');
+
+  db.createCollection('backtest_results');
+  db.createCollection('model_params');
+  db.createCollection('signal_snapshots');
+
+  db.backtest_results.createIndex({ strategy_id: 1, created_at: -1 });
+  db.model_params.createIndex({ strategy_id: 1, version: -1 });
+  db.signal_snapshots.createIndex({ strategy_id: 1, date: -1 });
+  ```
+- [ ] Verify: `docker exec -it quant-mongo mongosh csm_logs --eval "show collections"`
+  → the created collections are listed
+
+**Exit criteria:** MongoDB collections and indexes are created automatically after `docker compose up`.
+
+### 3.2 Connectivity smoke test from Python
+
+- [ ] Test PostgreSQL via `psycopg2`:
+  ```python
+  import psycopg2
+  conn = psycopg2.connect(
+      "postgresql://postgres:<pass>@localhost:5432/db_csm_set"
+  )
+  cur = conn.cursor()
+  cur.execute("SELECT version();")
+  print(cur.fetchone())
+  ```
+- [ ] Test MongoDB via `pymongo`:
+  ```python
+  from pymongo import MongoClient
+  client = MongoClient("mongodb://localhost:27017/")
+  db = client.csm_logs
+  db.backtest_results.insert_one({"test": "ok", "ts": "2026-05-05"})
+  assert db.backtest_results.count_documents({}) > 0
+  print("MongoDB OK")
+  ```
+- [ ] Record the connection strings in `README.md` (use `<pass>` as a placeholder, never the real password)
+
+**Exit criteria:** both PostgreSQL and MongoDB accept Python connections successfully.
+
+---
+
+## Phase 4 — Operations & Health Check ⚙️
+
+> **Goal:** Prepare the health-check, backup, and recovery procedures needed for production.
+
+### 4.1 Health check
+
+- [ ] Add `healthcheck:` blocks in `docker-compose.yml`:
+  ```yaml
+  # PostgreSQL
+  postgres:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # MongoDB
+  mongodb:
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+  ```
+- [ ] Verify: `docker compose ps` shows `(healthy)` for every container
+
+**Exit criteria:** containers report `healthy`, not just `running`.
+
+### 4.2 Backup script
+
+- [ ] Create the `backups/` folder (gitignored)
+- [ ] Create `scripts/backup.sh`:
+  ```bash
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  DATE=$(date +%Y%m%d_%H%M%S)
+  BACKUP_DIR="./backups"
+  mkdir -p "$BACKUP_DIR"
+
+  echo "=== Backing up PostgreSQL ==="
+  docker exec quant-postgres pg_dumpall -U postgres \
+      > "$BACKUP_DIR/pg_all_${DATE}.sql"
+  echo "PostgreSQL backup saved: pg_all_${DATE}.sql"
+
+  echo "=== Backing up MongoDB ==="
+  docker exec quant-mongo mongodump \
+      --out "/tmp/mongodump_${DATE}"
+  docker cp "quant-mongo:/tmp/mongodump_${DATE}" \
+      "$BACKUP_DIR/mongo_${DATE}"
+  echo "MongoDB backup saved: mongo_${DATE}/"
+  ```
+- [ ] Verify: `bash scripts/backup.sh` → all backup files are produced
+- [ ] Restore from a backup at least once to verify the procedure
+- [ ] Document the backup schedule in `README.md` (recommended: daily, before model runs)
+
+**Exit criteria:** the backup script works end-to-end and data can be restored from a backup.
+
+### 4.3 Connection-string reference
+
+- [ ] Record every connection string in `README.md`:
+  ```
+  # CSM-SET → PostgreSQL
+  postgresql://postgres:<pass>@quant-postgres:5432/db_csm_set
+
+  # Gateway → PostgreSQL (central)
+  postgresql://postgres:<pass>@quant-postgres:5432/db_gateway
+
+  # CSM-SET logs → MongoDB
+  mongodb://quant-mongo:27017/csm_logs
+  ```
+- [ ] Provide `.env.example` with the required variables:
+  ```env
+  POSTGRES_PASSWORD=your_strong_password_here
+  ```
+
+**Exit criteria:** a new developer can read `README.md` and bring the stack up without asking questions.
+
+---
+
+## Project file structure
+
+```
+infra-db/
+├── docker-compose.yml              # Core services: postgres + mongodb
+├── .env                            # Real credentials (gitignored)
+├── .env.example                    # Credentials template
+├── .gitignore
+├── README.md                       # Setup, connection strings, backup guide
+│
+├── init-scripts/                   # Run automatically on first container start
+│   ├── 01_create_databases.sql     # Create db_csm_set, db_gateway
+│   ├── 02_enable_timescaledb.sql   # Enable the TimescaleDB extension
+│   ├── 03_schema_csm_set.sql       # Tables: equity_curve, trade_history, backtest_log
+│   ├── 04_schema_gateway.sql       # Tables: daily_performance, portfolio_snapshot
+│   └── mongo-init.js               # MongoDB: create collections + indexes
+│
+├── scripts/
+│   └── backup.sh                   # Back up PostgreSQL + MongoDB
+│
+└── backups/                        # Backup output directory (gitignored)
+```
+
+---
+
+## Dependency Map
+
+```
+Phase 1 (Bootstrap + Docker Compose + Network)
+    └── Phase 2 (PostgreSQL + TimescaleDB + Schema)
+            └── Phase 3 (MongoDB + Collections)
+                    └── Phase 4 (Health Check + Backup + Docs)
+                            └── [ready to plug in the CSM-SET adapter]
+                                    └── [API Gateway Phase 3 onward]
+```
+
+---
+
+## Overall Exit Criteria
+
+`docker compose up -d` from a fresh clone → everything is ready with no extra configuration:
+
+- `docker compose ps` shows `quant-postgres` and `quant-mongo` as `healthy`
+- `psql` connects to `db_csm_set` and `db_gateway` with the TimescaleDB extension available
+- `mongosh` connects to `csm_logs` and lists the expected collections and indexes
+- The Python connectivity smoke test passes for both PostgreSQL and MongoDB
+- `scripts/backup.sh` runs and produces complete backup artifacts
+- Every container is on `quant-network` so strategy services can reach them by hostname
+
+---
+
+## Current status
+
+> Update this section as each phase completes.
+
+- **Active phase:** Phase 1 — Project Bootstrap
+- **Completed phases:** (none yet)
+- **Blocked by:** nothing
+
+---
+
+## Related notes
+
+- [[batt/quant-csm-set]] — Architecture overview & main roadmap (API Gateway + Dashboard)
+- [[batt/Cross-Sectional Momentum (CSM)]] — Strategy logic & backtest

@@ -22,7 +22,7 @@ When invoked, this assistant will:
 
 ### Git Operations Focus
 - **Analysis**: Review all modified, added, and deleted files
-- **Commit Message Generation**: Professional messages following Conventional Commits
+- **Commit Message Generation**: Professional messages following Conventional Commits (use `infra` type for Docker Compose, init-script, and database infrastructure changes)
 - **Commit Execution**: Execute commits with generated messages
 - **Push Operations**: Push changes to remote repository
 - **Status Reporting**: Provide clear status updates at each step
@@ -40,7 +40,7 @@ The assistant generates commit messages following the format from `.github/instr
 
 ### Message Generation Process
 1. **Analyze changes**: Review all modified, added, and deleted files
-2. **Categorize changes**: Group by feature, fix, refactor, docs, etc.
+2. **Categorize changes**: Group by feature, fix, refactor, docs, etc. Use `infra` for Docker/init-script/database changes.
 3. **Determine scope**: Identify the affected module or area
 4. **Write summary**: Clear, imperative, ≤ 72 characters
 5. **Write body**: Why + what files + testing performed
@@ -60,6 +60,11 @@ git log --oneline -5
 uv run ruff check . && uv run ruff format --check . && uv run mypy src tests && uv run pytest -v
 ```
 
+For DB-infra changes also verify Docker Compose stack is healthy:
+```bash
+docker compose up -d && docker compose ps
+```
+
 ## Compliance Enforcement
 
 ### AI Instruction Adherence — AUTOMATED
@@ -74,6 +79,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src tests && 
 - Push operations confirmed with user
 - Status confirmation after each operation
 - Clear audit trail of all git operations
+- `.env` and credential files are NEVER staged
 
 ## Usage Instructions
 
