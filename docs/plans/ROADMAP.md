@@ -340,6 +340,51 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 
 ---
 
+## Phase 5 — Documentation
+
+> **Goal:** Create comprehensive, discoverable documentation so new users can
+> understand, set up, and contribute to the project without reading source code.
+
+### 5.1 Project overview
+
+- [x] Create `docs/overview.md` — project identity, architecture diagram, data flow,
+  key design decisions, and a documentation map linking to every other doc
+- [x] Synthesize content from `.claude/knowledge/architecture.md`,
+  `.claude/knowledge/stack-decisions.md`, and the completed phase plans
+
+### 5.2 Usage guide
+
+- [x] Create `docs/usage.md` — prerequisites, quick start, Docker Compose commands,
+  connection strings (in-network and host-side), Python connectivity, healthcheck
+  verification, backup and restore runbooks, security scanning, troubleshooting
+- [x] Extract and expand usage material from `README.md` into the dedicated guide,
+  keeping `README.md` focused on the quick-start path
+
+### 5.3 Module reference
+
+- [x] Create `docs/modules.md` — per-module documentation for the Python connectivity
+  layer:
+  - `src/config.py` — Pydantic Settings class, fields, validators, computed properties
+  - `src/db/postgres.py` — asyncpg pool management and health checks
+  - `src/db/mongo.py` — Motor async client and health checks
+  - `src/db/errors.py` — exception hierarchy
+  - `src/main.py` — async smoke-test entrypoint
+  - `init-scripts/` — SQL/JS init scripts reference with schema summaries
+  - `scripts/` — backup.sh and restore.sh reference
+
+### 5.4 Navigation and cross-references
+
+- [x] Update `README.md` with a Documentation section linking to all new docs
+- [x] Ensure every cross-reference between docs is a valid relative link
+- [x] Surface `.claude/knowledge/` content (architecture, standards, decisions) in
+  human-readable form within `docs/`
+
+**Exit criteria:** a new contributor can navigate from `README.md` to any piece of
+information they need — architecture, usage, module APIs, or contribution guidelines —
+without hitting a dead end or placeholder.
+
+---
+
 ## Project file structure
 
 ```
@@ -358,7 +403,13 @@ infra-db/
 │   └── mongo-init.js               # MongoDB: create collections + indexes
 │
 ├── scripts/
-│   └── backup.sh                   # Back up PostgreSQL + MongoDB
+│   ├── backup.sh                   # Back up PostgreSQL + MongoDB
+│   └── restore.sh                  # Restore from a timestamped backup
+│
+├── docs/
+│   ├── overview.md                 # Project overview, architecture, doc map
+│   ├── usage.md                    # Setup, operations, and troubleshooting
+│   └── modules.md                  # Python module and script reference
 │
 └── backups/                        # Backup output directory (gitignored)
 ```
@@ -371,9 +422,10 @@ infra-db/
 Phase 1 (Bootstrap + Docker Compose + Network)
     └── Phase 2 (PostgreSQL + TimescaleDB + Schema)
             └── Phase 3 (MongoDB + Collections)
-                    └── Phase 4 (Health Check + Backup + Docs)
-                            └── [ready to plug in the CSM-SET adapter]
-                                    └── [API Gateway Phase 3 onward]
+                    └── Phase 4 (Health Check + Backup + Restore)
+                            └── Phase 5 (Documentation)
+                                    └── Phase 6 — Downstream service integration
+                                            └── [CSM-SET adapter → API Gateway]
 ```
 
 ---
@@ -395,10 +447,10 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 
 > Update this section as each phase completes.
 
-- **Active phase:** Phase 5 — Downstream service integration (CSM-SET adapter, API Gateway wiring)
+- **Active phase:** Phase 5 — Documentation (comprehensive project docs, module reference, usage guide)
 - **Completed phases:** Phase 1 (2026-05-06), Phase 2 (2026-05-06), Phase 3 (2026-05-06), Phase 4 (2026-05-06)
 - **Blocked by:** nothing
-- **Next:** Wire the CSM-SET strategy adapter to `db_csm_set` and `csm_logs`; provision the API Gateway service against `db_gateway`. Phase 4 completion record: [docs/plans/phase_4_operations_health_check/phase_4_operations_health_check.md](phase_4_operations_health_check/phase_4_operations_health_check.md).
+- **Next:** Phase 6 — Downstream service integration: wire the CSM-SET strategy adapter to `db_csm_set` and `csm_logs`; provision the API Gateway service against `db_gateway`.
 
 ---
 
