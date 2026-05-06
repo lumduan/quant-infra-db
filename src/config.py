@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # MongoDB
     mongo_host: str = "localhost"
     mongo_port: int = 27017
+    mongo_username: str = ""
+    mongo_password: SecretStr = SecretStr("")
+    mongo_database: str = "csm_logs"
 
     @field_validator("postgres_password")
     @classmethod
@@ -45,5 +48,16 @@ class Settings(BaseSettings):
 
     @property
     def mongo_uri(self) -> str:
-        """Connection URI for MongoDB."""
+        """Connection URI for MongoDB.
+
+        Includes authentication credentials when mongo_username and
+        mongo_password are both set.  Falls back to a no-auth URI otherwise
+        (development without MONGO_INITDB_ROOT_USERNAME / MONGO_INITDB_ROOT_PASSWORD).
+        """
+        if self.mongo_username and self.mongo_password.get_secret_value():
+            return (
+                f"mongodb://{self.mongo_username}:"
+                f"{self.mongo_password.get_secret_value()}"
+                f"@{self.mongo_host}:{self.mongo_port}"
+            )
         return f"mongodb://{self.mongo_host}:{self.mongo_port}"
