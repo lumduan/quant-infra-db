@@ -45,10 +45,40 @@ class TestSettings:
             assert dsn == "postgresql://postgres:mypass@localhost:5432/db_gateway"
 
     def test_mongo_uri_format(self) -> None:
-        """MongoDB URI is correctly formatted."""
+        """MongoDB URI is correctly formatted without auth credentials."""
         with patch.dict("os.environ", {"POSTGRES_PASSWORD": "test"}, clear=True):
             settings = Settings()
             assert settings.mongo_uri == "mongodb://localhost:27017"
+
+    def test_mongo_uri_format_with_auth(self) -> None:
+        """MongoDB URI includes credentials when username and password are set."""
+        with patch.dict(
+            "os.environ",
+            {
+                "POSTGRES_PASSWORD": "test",
+                "MONGO_USERNAME": "admin",
+                "MONGO_PASSWORD": "s3cret",
+            },
+            clear=True,
+        ):
+            settings = Settings()
+            assert settings.mongo_uri == "mongodb://admin:s3cret@localhost:27017"
+
+    def test_mongo_uri_format_auth_partial_username_only(self) -> None:
+        """MongoDB URI falls back to no-auth when only username is set."""
+        with patch.dict(
+            "os.environ",
+            {"POSTGRES_PASSWORD": "test", "MONGO_USERNAME": "admin"},
+            clear=True,
+        ):
+            settings = Settings()
+            assert settings.mongo_uri == "mongodb://localhost:27017"
+
+    def test_mongo_database_default(self) -> None:
+        """mongo_database defaults to csm_logs."""
+        with patch.dict("os.environ", {"POSTGRES_PASSWORD": "test"}, clear=True):
+            settings = Settings()
+            assert settings.mongo_database == "csm_logs"
 
     def test_custom_host_and_port(self) -> None:
         """DSNs reflect custom host and port overrides."""

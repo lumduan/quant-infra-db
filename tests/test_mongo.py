@@ -35,13 +35,23 @@ async def test_collections_exist(mongo_client: AsyncIOMotorClient[Any]) -> None:
 
 
 async def test_indexes_exist(mongo_client: AsyncIOMotorClient[Any]) -> None:
-    """backtest_results has the expected compound index."""
+    """Each collection has the expected compound index."""
     db = mongo_client.csm_logs
+
+    # backtest_results: (strategy_id, created_at)
     indexes = await db.backtest_results.index_information()
-    # The _id index is always present; check for our compound index
     index_keys = [v["key"] for v in indexes.values()]
-    expected = [("strategy_id", 1), ("created_at", -1)]
-    assert expected in index_keys
+    assert [("strategy_id", 1), ("created_at", -1)] in index_keys
+
+    # model_params: (strategy_id, version)
+    indexes = await db.model_params.index_information()
+    index_keys = [v["key"] for v in indexes.values()]
+    assert [("strategy_id", 1), ("version", -1)] in index_keys
+
+    # signal_snapshots: (strategy_id, date)
+    indexes = await db.signal_snapshots.index_information()
+    index_keys = [v["key"] for v in indexes.values()]
+    assert [("strategy_id", 1), ("date", -1)] in index_keys
 
 
 async def test_document_round_trip(mongo_client: AsyncIOMotorClient[Any]) -> None:

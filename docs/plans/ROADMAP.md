@@ -395,10 +395,10 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 
 > Update this section as each phase completes.
 
-- **Active phase:** Phase 2 — PostgreSQL & TimescaleDB Setup (hardening complete)
-- **Completed phases:** Phase 1 (2026-05-06), Phase 2 (2026-05-06)
+- **Active phase:** Phase 4 — Operations & Health Check
+- **Completed phases:** Phase 1 (2026-05-06), Phase 2 (2026-05-06), Phase 3 (2026-05-06)
 - **Blocked by:** nothing
-- **Next:** Phase 3 (MongoDB Setup) — schema-less collections, indexes, and Python smoke test
+- **Next:** Phase 4 (Operations & Health Check) — healthcheck verification, backup testing, connection-string reference
 
 ---
 
