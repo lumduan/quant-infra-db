@@ -51,5 +51,8 @@ Thumbs.db
 # Logs
 *.log
 
+# Backups (created by scripts/backup.sh)
+backups/
+
 # Claude Code local settings
 .claude/settings.local.json
