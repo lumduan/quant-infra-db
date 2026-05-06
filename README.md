@@ -2,20 +2,28 @@
 
 > Database infrastructure layer for the Quant Trading system — PostgreSQL + TimescaleDB + MongoDB via Docker Compose.
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-[![Docker Publish](https://github.com/OWNER/REPO/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/docker-publish.yml)
-[![Security Scan](https://github.com/OWNER/REPO/actions/workflows/security.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/security.yml)
+[![CI](https://github.com/lumduan/quant-infra-db/actions/workflows/ci.yml/badge.svg)](https://github.com/lumduan/quant-infra-db/actions/workflows/ci.yml)
+[![Docker Publish](https://github.com/lumduan/quant-infra-db/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/lumduan/quant-infra-db/actions/workflows/docker-publish.yml)
+[![Security Scan](https://github.com/lumduan/quant-infra-db/actions/workflows/security.yml/badge.svg)](https://github.com/lumduan/quant-infra-db/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 `quant-infra-db` provisions **PostgreSQL + TimescaleDB** and **MongoDB** through Docker Compose
 on a shared Docker network `quant-network`, consumed by downstream strategy services
 and the API Gateway.
 
-> Full roadmap: [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md)
+## Documentation
+
+| Document | Purpose |
+| --- | --- |
+| [docs/overview.md](docs/overview.md) | Architecture, data flow, design decisions, documentation map |
+| [docs/usage.md](docs/usage.md) | Setup guide, Docker commands, backup/restore, troubleshooting |
+| [docs/modules.md](docs/modules.md) | Python module API reference, init scripts, operations scripts |
+| [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md) | Master roadmap with phase status and dependency map |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution workflow, quality gates, commit conventions |
 
 ## Architecture
 
-```
+```text
 docker compose up -d
   └── quant-postgres  (timescale/timescaledb:latest-pg16)
   │     ├── db_csm_set   — equity_curve, trade_history, backtest_log
@@ -61,7 +69,7 @@ docker compose ps
 
 ### Within quant-network (service-to-service)
 
-```
+```text
 # CSM-SET → PostgreSQL
 postgresql://postgres:<pass>@quant-postgres:5432/db_csm_set
 
@@ -74,7 +82,7 @@ mongodb://quant-mongo:27017/csm_logs
 
 ### From the host (development)
 
-```
+```text
 # PostgreSQL
 postgresql://postgres:<pass>@localhost:5432/db_csm_set
 postgresql://postgres:<pass>@localhost:5432/db_gateway
@@ -88,14 +96,9 @@ Replace `<pass>` with the value of `POSTGRES_PASSWORD` from your `.env` file.
 ## Python connectivity
 
 ```bash
-# Install dependencies
 uv sync --all-groups
-
-# Run the connectivity smoke test
 uv run python -m src.main
 ```
-
-Example usage in code:
 
 ```python
 from src.config import Settings
@@ -116,7 +119,7 @@ uv run pytest tests/test_config.py -v
 # Integration tests (requires healthy Docker Compose stack)
 uv run pytest tests/test_postgres.py tests/test_mongo.py tests/test_infra.py -v
 
-# Full test suite (integration tests skipped if Docker unavailable)
+# Full test suite
 uv run pytest -v
 ```
 
@@ -125,113 +128,19 @@ Coverage must stay >= 80%. The threshold is enforced in CI and in `pyproject.tom
 ## Quality gate
 
 ```bash
-uv run ruff check .               # Lint
-uv run ruff format --check .      # Format check
-uv run mypy src tests             # Type check
-uv run pytest                     # Tests + coverage
-```
-
-Run all together:
-
-```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy src tests && uv run pytest
 ```
 
-## Healthcheck verification
-
-The Docker Compose definition wires healthchecks for both services. Each probe runs every
-30s with a 10s timeout, allows 3 retries before flipping to `unhealthy`, and grants a 10s
-`start_period` after container start.
-
-- `quant-postgres` — `pg_isready -U postgres`
-- `quant-mongo` — `mongosh --eval "db.adminCommand('ping')"`
-
-Confirm both containers report `healthy`:
+## Backup & restore
 
 ```bash
-docker compose ps
-# NAME             STATUS                       
-# quant-postgres   Up X minutes (healthy)       
-# quant-mongo      Up X minutes (healthy)       
-
-docker inspect --format '{{.State.Health.Status}}' quant-postgres   # → healthy
-docker inspect --format '{{.State.Health.Status}}' quant-mongo      # → healthy
+bash scripts/backup.sh                                    # create a timestamped backup
+bash scripts/restore.sh --list                            # list available backups
+bash scripts/restore.sh --force 20260506_134812Z          # restore both engines
+RESTORE_CONFIRM=restore bash scripts/restore.sh --force ...  # non-interactive mode
 ```
 
-The MongoDB healthcheck deliberately runs unauthenticated. `db.adminCommand('ping')` is on
-MongoDB's auth-bypass list and returns `{ ok: 1 }` even with auth enabled, which keeps the
-healthcheck command free of plaintext credentials in `docker inspect` output. The auth path
-itself is exercised by `scripts/backup.sh` and `scripts/restore.sh`, which use the
-`MONGO_INITDB_ROOT_*` credentials from `.env`.
-
-## Backup
-
-```bash
-# Create a timestamped backup of PostgreSQL + MongoDB
-bash scripts/backup.sh
-```
-
-Artefacts land in `./backups/` (gitignored):
-
-- `pg_all_<UTC-timestamp>.sql` — full PostgreSQL dump (`pg_dumpall --clean --if-exists`)
-- `mongo_<UTC-timestamp>/` — MongoDB dump (`mongodump --authenticationDatabase admin`)
-
-The script:
-
-- Sources `.env` for `POSTGRES_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`
-  and fails fast if any are missing.
-- Refuses to run if either container is not reporting `healthy`.
-- Removes partial artefacts on error via an `ERR` trap, so the `backups/` directory never
-  accumulates corrupt dumps.
-- Resolves the output directory from the script's location, so it works under `cron`, CI,
-  or any working directory.
-
-Recommended schedule: daily, before automated model runs. Retention is the operator's
-responsibility (e.g. add `find backups/ -mtime +14 -delete` to a cron); the script does not
-auto-prune.
-
-## Restore
-
-> **Destructive operation.** A restore drops `db_csm_set` / `db_gateway` and their
-> contents, then replays the dump. MongoDB collections are dropped per `mongorestore --drop`.
-
-```bash
-# 1. List available backups
-bash scripts/restore.sh --list
-# 20260506_134812Z  postgres+mongo
-# 20260505_134801Z  postgres+mongo
-
-# 2. Restore both engines from a timestamp
-bash scripts/restore.sh --force 20260506_134812Z
-# Prompts: "Type 'restore' to proceed"
-
-# 3. Restore only one engine (handy when a partial restore failed and you need
-#    to retry just one side; cross-engine atomicity is not provided)
-bash scripts/restore.sh --postgres-only --force 20260506_134812Z
-bash scripts/restore.sh --mongo-only    --force 20260506_134812Z
-
-# 4. Non-interactive (cron, CI): bypass the confirmation prompt explicitly
-RESTORE_CONFIRM=restore bash scripts/restore.sh --force 20260506_134812Z
-```
-
-The script enforces three guardrails before touching data:
-
-1. Both target containers must report `healthy`.
-2. Non-empty target databases require `--force`.
-3. With `--force` and a TTY, the operator must type `restore`. With no TTY (cron, CI),
-   `RESTORE_CONFIRM=restore` must be set in the environment.
-
-## Docker Compose commands
-
-```bash
-docker compose up -d          # start the full stack
-docker compose ps             # check status (should show healthy)
-docker compose down           # stop (preserves data volumes)
-docker compose down -v        # stop and destroy volumes (fresh start)
-docker compose logs -f         # tail logs
-docker exec -it quant-postgres psql -U postgres   # interactive psql
-docker exec -it quant-mongo mongosh                # interactive mongosh
-```
+See [docs/usage.md](docs/usage.md) for full backup/restore runbooks, healthcheck verification, and troubleshooting.
 
 ## Directory structure
 
@@ -250,9 +159,11 @@ docker exec -it quant-mongo mongosh                # interactive mongosh
 ├── .env.example                    # Credentials template
 ├── src/                            # Python source (connectivity layer)
 ├── tests/                          # pytest suite
-├── docs/
-│   └── plans/
-│       └── ROADMAP.md              # Master roadmap
+├── docs/                           # Project documentation
+│   ├── overview.md                 # Architecture, design decisions
+│   ├── usage.md                    # Setup, operations, troubleshooting
+│   ├── modules.md                  # Module and script API reference
+│   └── plans/                      # Phase plans and roadmap
 ├── .claude/                        # AI agent context & playbooks
 ├── .github/                        # CI/CD workflows, issue/PR templates
 ├── pyproject.toml                  # uv project config + tool settings
@@ -263,10 +174,7 @@ docker exec -it quant-mongo mongosh                # interactive mongosh
 ## Security scanning
 
 ```bash
-# Static analysis for common Python security issues
 uv run bandit -r src
-
-# Check dependencies for known CVEs
 uv run pip-audit
 ```
 
