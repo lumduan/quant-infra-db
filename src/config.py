@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Central configuration loaded from environment and .env file."""
 
-    model_config = SettingsConfigDict(env_file=".env", frozen=True)
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", frozen=True)
 
     # PostgreSQL
     postgres_password: SecretStr = SecretStr("")

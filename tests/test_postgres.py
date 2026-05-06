@@ -98,3 +98,38 @@ async def test_schema_tables_exist(settings: Settings) -> None:
         assert "portfolio_snapshot" in tables
     finally:
         await conn.close()
+
+
+async def test_column_names_csm_set(settings: Settings) -> None:
+    """equity_curve must use 'equity' not 'nav'; types must match expected."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.csm_set_dsn)
+    try:
+        rows = await conn.fetch(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_name = 'equity_curve' AND table_schema = 'public'"
+        )
+        cols = {(r["column_name"], r["data_type"]) for r in rows}
+        assert ("time", "timestamp with time zone") in cols
+        assert ("strategy_id", "text") in cols
+        assert ("equity", "double precision") in cols
+    finally:
+        await conn.close()
+
+
+async def test_column_names_gateway(settings: Settings) -> None:
+    """daily_performance must have daily_return and cumulative_return, not daily_pnl."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.gateway_dsn)
+    try:
+        rows = await conn.fetch(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_name = 'daily_performance' AND table_schema = 'public'"
+        )
+        cols = {(r["column_name"], r["data_type"]) for r in rows}
+        assert ("daily_return", "double precision") in cols
+        assert ("cumulative_return", "double precision") in cols
+    finally:
+        await conn.close()

@@ -123,42 +123,44 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 ### 2.3 Schema for `db_csm_set`
 
 - [x] Create init script `init-scripts/03_schema_csm_set.sql`
-- [x] Table `equity_curve` — daily NAV per strategy:
+- [x] Table `equity_curve` — daily equity per strategy (TimescaleDB hypertable):
   ```sql
   \c db_csm_set
 
-  CREATE TABLE equity_curve (
+  CREATE TABLE IF NOT EXISTS equity_curve (
       time        TIMESTAMPTZ NOT NULL,
       strategy_id TEXT        NOT NULL,
-      nav         NUMERIC     NOT NULL
+      equity      DOUBLE PRECISION NOT NULL
   );
-  SELECT create_hypertable('equity_curve', 'time');
-  CREATE INDEX ON equity_curve (strategy_id, time DESC);
+  SELECT create_hypertable('equity_curve', 'time', if_not_exists => TRUE);
+  CREATE INDEX IF NOT EXISTS idx_equity_curve_strategy_time
+      ON equity_curve (strategy_id, time DESC);
   ```
 - [x] Table `trade_history` — every trade record:
   ```sql
-  CREATE TABLE trade_history (
+  CREATE TABLE IF NOT EXISTS trade_history (
       id          SERIAL      PRIMARY KEY,
       time        TIMESTAMPTZ NOT NULL,
       strategy_id TEXT        NOT NULL,
       symbol      TEXT        NOT NULL,
-      side        TEXT        NOT NULL,   -- 'BUY' or 'SELL'
-      quantity    NUMERIC     NOT NULL,
-      price       NUMERIC     NOT NULL,
-      commission  NUMERIC     DEFAULT 0
+      side        TEXT        NOT NULL,
+      quantity    DOUBLE PRECISION NOT NULL,
+      price       DOUBLE PRECISION NOT NULL,
+      commission  DOUBLE PRECISION DEFAULT 0
   );
-  CREATE INDEX ON trade_history (strategy_id, time DESC);
+  CREATE INDEX IF NOT EXISTS idx_trade_history_strategy_time
+      ON trade_history (strategy_id, time DESC);
   ```
 - [x] Table `backtest_log` — metadata for each backtest run:
   ```sql
-  CREATE TABLE backtest_log (
+  CREATE TABLE IF NOT EXISTS backtest_log (
       id          SERIAL      PRIMARY KEY,
       run_id      TEXT        UNIQUE NOT NULL,
       strategy_id TEXT        NOT NULL,
       started_at  TIMESTAMPTZ NOT NULL,
       finished_at TIMESTAMPTZ,
-      config      JSONB,      -- parameters used for the run
-      summary     JSONB       -- sharpe, cagr, max_drawdown, etc.
+      config      JSONB,
+      summary     JSONB
   );
   ```
 - [x] Verify: insert sample rows → queries return them correctly
@@ -168,34 +170,36 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 ### 2.4 Schema for `db_gateway`
 
 - [x] Create init script `init-scripts/04_schema_gateway.sql`
-- [x] Table `daily_performance` — daily performance from every strategy:
+- [x] Table `daily_performance` — daily performance from every strategy (TimescaleDB hypertable):
   ```sql
   \c db_gateway
 
-  CREATE TABLE daily_performance (
-      time         TIMESTAMPTZ NOT NULL,
-      strategy_id  TEXT        NOT NULL,
-      daily_pnl    NUMERIC,
-      total_value  NUMERIC,
-      cash_balance NUMERIC,
-      max_drawdown NUMERIC,
-      sharpe_ratio NUMERIC,
-      metadata     JSONB       -- strategy-specific extras
+  CREATE TABLE IF NOT EXISTS daily_performance (
+      time            TIMESTAMPTZ NOT NULL,
+      strategy_id     TEXT        NOT NULL,
+      daily_return    DOUBLE PRECISION,
+      cumulative_return DOUBLE PRECISION,
+      total_value     DOUBLE PRECISION,
+      cash_balance    DOUBLE PRECISION,
+      max_drawdown    DOUBLE PRECISION,
+      sharpe_ratio    DOUBLE PRECISION,
+      metadata        JSONB
   );
-  SELECT create_hypertable('daily_performance', 'time');
-  CREATE INDEX ON daily_performance (strategy_id, time DESC);
+  SELECT create_hypertable('daily_performance', 'time', if_not_exists => TRUE);
+  CREATE INDEX IF NOT EXISTS idx_daily_performance_strategy_time
+      ON daily_performance (strategy_id, time DESC);
   ```
-- [x] Table `portfolio_snapshot` — combined snapshot across all strategies for a given date:
+- [x] Table `portfolio_snapshot` — combined snapshot across all strategies for a given date (TimescaleDB hypertable):
   ```sql
-  CREATE TABLE portfolio_snapshot (
+  CREATE TABLE IF NOT EXISTS portfolio_snapshot (
       time              TIMESTAMPTZ NOT NULL,
-      total_portfolio   NUMERIC     NOT NULL,
-      weighted_return   NUMERIC,
-      combined_drawdown NUMERIC,
+      total_portfolio   DOUBLE PRECISION NOT NULL,
+      weighted_return   DOUBLE PRECISION,
+      combined_drawdown DOUBLE PRECISION,
       active_strategies INTEGER,
-      allocation        JSONB       -- weight per strategy
+      allocation        JSONB
   );
-  SELECT create_hypertable('portfolio_snapshot', 'time');
+  SELECT create_hypertable('portfolio_snapshot', 'time', if_not_exists => TRUE);
   ```
 - [x] Verify: insert rows from two strategies → cross-strategy aggregation queries return the expected results
 
@@ -391,10 +395,10 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 
 > Update this section as each phase completes.
 
-- **Active phase:** Phase 1 — Project Bootstrap (complete)
-- **Completed phases:** Phase 1 (2026-05-06)
+- **Active phase:** Phase 2 — PostgreSQL & TimescaleDB Setup (hardening complete)
+- **Completed phases:** Phase 1 (2026-05-06), Phase 2 (2026-05-06)
 - **Blocked by:** nothing
-- **Next:** Phase 2+ schema and connectivity validated; ready for downstream integration
+- **Next:** Phase 3 (MongoDB Setup) — schema-less collections, indexes, and Python smoke test
 
 ---
 
