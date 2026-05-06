@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded `test_mongo.py` index assertions to validate all three collections.
 - Schema documentation: `docs/plans/phase_3_mongodb/phase_3_mongodb_setup.md`.
 
+### Added (Phase 4 — Operations & Health Check)
+
+- Hardened `scripts/backup.sh`: sources `.env`, validates required credentials, refuses to run when either container is not `healthy`, passes MongoDB credentials via `docker exec -e` (admin auth), uses `pg_dumpall --clean --if-exists` for idempotent restore, traps errors to remove partial artefacts, and resolves `BACKUP_DIR` from `${BASH_SOURCE[0]}` so the script works from any CWD. Timestamps are UTC.
+- New `scripts/restore.sh` covering both engines with `--list`, `--force`, `--postgres-only`, `--mongo-only`, an interactive `read -r -p` confirmation, and a `RESTORE_CONFIRM=restore` bypass for non-interactive use. Strips the cluster superuser role's `DROP/CREATE ROLE` lines before piping `pg_dumpall` output to `psql` so the restore is idempotent against a live cluster.
+- README sections: "Healthcheck verification", "Backup", "Restore" with the safety semantics so operators do not need to read the script source.
+- Phase 4 plan document: `docs/plans/phase_4_operations_health_check/phase_4_operations_health_check.md` with end-to-end verification evidence.
+
+### Fixed (Phase 4)
+
+- `.gitignore` now excludes `backups/` (closes a Phase 1 oversight where the ROADMAP claimed the task complete but the entry was never added).
+
 ### Changed
 
 - Renamed project from `python-template` to `quant-infra-db`.

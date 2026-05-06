@@ -137,22 +137,89 @@ Run all together:
 uv run ruff check . && uv run ruff format --check . && uv run mypy src tests && uv run pytest
 ```
 
-## Backup and restore
+## Healthcheck verification
+
+The Docker Compose definition wires healthchecks for both services. Each probe runs every
+30s with a 10s timeout, allows 3 retries before flipping to `unhealthy`, and grants a 10s
+`start_period` after container start.
+
+- `quant-postgres` — `pg_isready -U postgres`
+- `quant-mongo` — `mongosh --eval "db.adminCommand('ping')"`
+
+Confirm both containers report `healthy`:
 
 ```bash
-# Create a backup (PostgreSQL + MongoDB)
-bash scripts/backup.sh
+docker compose ps
+# NAME             STATUS                       
+# quant-postgres   Up X minutes (healthy)       
+# quant-mongo      Up X minutes (healthy)       
 
-# Backups are written to ./backups/ (gitignored)
-ls -la backups/
+docker inspect --format '{{.State.Health.Status}}' quant-postgres   # → healthy
+docker inspect --format '{{.State.Health.Status}}' quant-mongo      # → healthy
 ```
 
-Backups include:
+The MongoDB healthcheck deliberately runs unauthenticated. `db.adminCommand('ping')` is on
+MongoDB's auth-bypass list and returns `{ ok: 1 }` even with auth enabled, which keeps the
+healthcheck command free of plaintext credentials in `docker inspect` output. The auth path
+itself is exercised by `scripts/backup.sh` and `scripts/restore.sh`, which use the
+`MONGO_INITDB_ROOT_*` credentials from `.env`.
 
-- `pg_all_<timestamp>.sql` — full PostgreSQL dump (`pg_dumpall`)
-- `mongo_<timestamp>/` — MongoDB dump (`mongodump`)
+## Backup
 
-Recommended schedule: daily, before automated model runs.
+```bash
+# Create a timestamped backup of PostgreSQL + MongoDB
+bash scripts/backup.sh
+```
+
+Artefacts land in `./backups/` (gitignored):
+
+- `pg_all_<UTC-timestamp>.sql` — full PostgreSQL dump (`pg_dumpall --clean --if-exists`)
+- `mongo_<UTC-timestamp>/` — MongoDB dump (`mongodump --authenticationDatabase admin`)
+
+The script:
+
+- Sources `.env` for `POSTGRES_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`
+  and fails fast if any are missing.
+- Refuses to run if either container is not reporting `healthy`.
+- Removes partial artefacts on error via an `ERR` trap, so the `backups/` directory never
+  accumulates corrupt dumps.
+- Resolves the output directory from the script's location, so it works under `cron`, CI,
+  or any working directory.
+
+Recommended schedule: daily, before automated model runs. Retention is the operator's
+responsibility (e.g. add `find backups/ -mtime +14 -delete` to a cron); the script does not
+auto-prune.
+
+## Restore
+
+> **Destructive operation.** A restore drops `db_csm_set` / `db_gateway` and their
+> contents, then replays the dump. MongoDB collections are dropped per `mongorestore --drop`.
+
+```bash
+# 1. List available backups
+bash scripts/restore.sh --list
+# 20260506_134812Z  postgres+mongo
+# 20260505_134801Z  postgres+mongo
+
+# 2. Restore both engines from a timestamp
+bash scripts/restore.sh --force 20260506_134812Z
+# Prompts: "Type 'restore' to proceed"
+
+# 3. Restore only one engine (handy when a partial restore failed and you need
+#    to retry just one side; cross-engine atomicity is not provided)
+bash scripts/restore.sh --postgres-only --force 20260506_134812Z
+bash scripts/restore.sh --mongo-only    --force 20260506_134812Z
+
+# 4. Non-interactive (cron, CI): bypass the confirmation prompt explicitly
+RESTORE_CONFIRM=restore bash scripts/restore.sh --force 20260506_134812Z
+```
+
+The script enforces three guardrails before touching data:
+
+1. Both target containers must report `healthy`.
+2. Non-empty target databases require `--force`.
+3. With `--force` and a TTY, the operator must type `restore`. With no TTY (cron, CI),
+   `RESTORE_CONFIRM=restore` must be set in the environment.
 
 ## Docker Compose commands
 
@@ -178,7 +245,8 @@ docker exec -it quant-mongo mongosh                # interactive mongosh
 │   ├── 04_schema_gateway.sql
 │   └── mongo-init.js
 ├── scripts/
-│   └── backup.sh                   # Backup PostgreSQL + MongoDB
+│   ├── backup.sh                   # Backup PostgreSQL + MongoDB
+│   └── restore.sh                  # Restore from a timestamped backup
 ├── .env.example                    # Credentials template
 ├── src/                            # Python source (connectivity layer)
 ├── tests/                          # pytest suite
