@@ -1,6 +1,6 @@
 ---
 mode: ask
-model: Claude Sonnet 4
+model: GPT-4.1
 description: Ultimate elite coding prompt architect with deep reasoning, senior engineering judgment, and production-grade AI workflow prompt generation.
 ---
 # Ultimate Prompt Engineering Mode
