@@ -1,137 +1,196 @@
-# python-template
+# quant-infra-db
 
-> Universal Python project template — uv-native, Docker-ready, AI-agent enabled.
+> Database infrastructure layer for the Quant Trading system — PostgreSQL + TimescaleDB + MongoDB via Docker Compose.
 
 [![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 [![Docker Publish](https://github.com/OWNER/REPO/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/docker-publish.yml)
 [![Security Scan](https://github.com/OWNER/REPO/actions/workflows/security.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A fork-ready Python project template with dependency management via [uv](https://docs.astral.sh/uv/),
-Docker support for containerized execution, CI/CD workflows, and a `.claude/`
-directory that AI coding agents use for project context and standards.
+`quant-infra-db` provisions **PostgreSQL + TimescaleDB** and **MongoDB** through Docker Compose
+on a shared Docker network `quant-network`, consumed by downstream strategy services
+and the API Gateway.
 
-## Features
+> Full roadmap: [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md)
 
-- **uv-native** — single `pyproject.toml` as the source of truth.
-- **Docker** — multi-stage build with `uv`, Python 3.11-slim, ready to deploy.
-- **Type-safe** — `mypy --strict` on all source and test code.
-- **Linted & formatted** — `ruff` with E, F, I, UP, B, SIM rules.
-- **≥80% coverage** — `pytest` + `pytest-asyncio` + `pytest-cov` enforced in CI.
-- **Security scanning** — weekly `bandit` and `pip-audit` runs.
-- **Pre-commit hooks** — ruff-check, ruff-format, mypy on every commit.
-- **AI agent ready** — `.claude/` directory with knowledge, playbooks, and prompt
-  engineering guidance.
-
-## Directory structure
+## Architecture
 
 ```
-.
-├── .claude/                       # AI agent context & playbooks
-│   ├── knowledge/project-skill.md # Master rules for all code
-│   ├── playbooks/                 # Step-by-step workflow guides
-│   └── prompts/                   # Prompt engineering instructions
-├── .github/                       # CI/CD, issue/PR templates
-│   ├── workflows/                 # ci.yml, docker-publish.yml, security.yml
-│   ├── ISSUE_TEMPLATE/
-│   ├── PULL_REQUEST_TEMPLATE.md
-│   └── FUNDING.yml
-├── src/                           # Application source
-│   └── main.py                    # Entrypoint
-├── tests/                         # Test suite
-├── docs/                          # Documentation
-├── Dockerfile                     # Multi-stage container build
-├── pyproject.toml                 # uv project config + tool settings
-├── uv.lock                        # Locked dependency versions
-├── .pre-commit-config.yaml
-├── .env.example
-├── CHANGELOG.md
-├── CODE_OF_CONDUCT.md
-├── CONTRIBUTING.md
-├── LICENSE
-└── SECURITY.md
+docker compose up -d
+  └── quant-postgres  (timescale/timescaledb:latest-pg16)
+  │     ├── db_csm_set   — equity_curve, trade_history, backtest_log
+  │     └── db_gateway   — daily_performance, portfolio_snapshot
+  └── quant-mongo    (mongo:latest)
+        └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
+
+All containers join the external network `quant-network` (created once per host).
+Downstream services reach databases by hostname (`quant-postgres`, `quant-mongo`),
+not by IP address.
 
 ## Prerequisites
 
-- Python 3.11 or 3.12
-- [uv](https://docs.astral.sh/uv/) (install with `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- Docker Engine >= 24 with Docker Compose v2 (`docker compose`, not legacy `docker-compose`)
+- Python >= 3.12
+- [uv](https://docs.astral.sh/uv/) >= 0.4
+- >= 4 GB free RAM, >= 5 GB free disk
 
-## Installation
+## Quick start
 
 ```bash
+# 1. Clone
 git clone https://github.com/OWNER/REPO.git
 cd REPO
 
-# Install all dependencies (dev group included by default)
+# 2. Create the shared Docker network (one-time per host)
+docker network create quant-network
+
+# 3. Configure credentials
+cp .env.example .env
+# Edit .env and set a strong POSTGRES_PASSWORD
+
+# 4. Start the stack
+docker compose up -d
+
+# 5. Verify health
+docker compose ps
+# Both quant-postgres and quant-mongo should show (healthy)
+```
+
+## Connection strings
+
+### Within quant-network (service-to-service)
+
+```
+# CSM-SET → PostgreSQL
+postgresql://postgres:<pass>@quant-postgres:5432/db_csm_set
+
+# Gateway → PostgreSQL
+postgresql://postgres:<pass>@quant-postgres:5432/db_gateway
+
+# CSM-SET logs → MongoDB
+mongodb://quant-mongo:27017/csm_logs
+```
+
+### From the host (development)
+
+```
+# PostgreSQL
+postgresql://postgres:<pass>@localhost:5432/db_csm_set
+postgresql://postgres:<pass>@localhost:5432/db_gateway
+
+# MongoDB
+mongodb://localhost:27017/csm_logs
+```
+
+Replace `<pass>` with the value of `POSTGRES_PASSWORD` from your `.env` file.
+
+## Python connectivity
+
+```bash
+# Install dependencies
 uv sync --all-groups
 
-# Install pre-commit hooks
-uv run pre-commit install
-```
-
-## Running locally
-
-```bash
+# Run the connectivity smoke test
 uv run python -m src.main
-# Output: hello from python-template
 ```
 
-## Running with Docker
+Example usage in code:
 
-```bash
-# Build
-docker build -t python-template:dev .
+```python
+from src.config import Settings
+from src.db import create_postgres_pool, check_postgres_health, close_postgres_pool
 
-# Run
-docker run --rm python-template:dev
-# Output: hello from python-template
+settings = Settings()
+pool = await create_postgres_pool(settings.csm_set_dsn)
+healthy = await check_postgres_health(pool)
+await close_postgres_pool(pool)
 ```
 
 ## Testing
 
 ```bash
-# Run all tests
-uv run pytest
+# Unit tests (no Docker required)
+uv run pytest tests/test_config.py -v
 
-# With verbosity and coverage
-uv run pytest -v --cov=src --cov-report=term-missing
+# Integration tests (requires healthy Docker Compose stack)
+uv run pytest tests/test_postgres.py tests/test_mongo.py tests/test_infra.py -v
+
+# Full test suite (integration tests skipped if Docker unavailable)
+uv run pytest -v
 ```
 
-Coverage must stay ≥80%. The threshold is enforced in CI and in `pyproject.toml`
-(`tool.pytest.ini_options.addopts`).
+Coverage must stay >= 80%. The threshold is enforced in CI and in `pyproject.toml`.
 
-## Linting, formatting, and type checking
+## Quality gate
 
 ```bash
 uv run ruff check .               # Lint
-uv run ruff format --check .      # Format check (passive)
-uv run ruff format .              # Auto-format (apply)
+uv run ruff format --check .      # Format check
 uv run mypy src tests             # Type check
+uv run pytest                     # Tests + coverage
 ```
 
-Run all quality gates together:
+Run all together:
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy src tests && uv run pytest
 ```
 
-## Using `.claude/` for AI agent workflows
+## Backup and restore
 
-This project is designed to work with AI coding agents like Claude Code.
-The `.claude/` directory provides agents with project context and enforceable
-standards:
+```bash
+# Create a backup (PostgreSQL + MongoDB)
+bash scripts/backup.sh
 
-| File | Purpose |
-|------|---------|
-| `.claude/knowledge/project-skill.md` | **Start here.** Hard rules, soft conventions, and quality gates. Agents load this first. |
-| `.claude/playbooks/feature-development.md` | Repeatable 8-step workflow: read → design → test-first → implement → quality gate → document → commit → verify. |
-| `.claude/prompts/Prompt-Engineer.prompt.md` | How to write effective prompts for AI agents on this project. Includes good and bad examples. |
+# Backups are written to ./backups/ (gitignored)
+ls -la backups/
+```
 
-When you open this repo in Claude Code (or any agent that reads `.claude/`),
-the agent will automatically pick up these files. You can also ask it explicitly:
-> *"Read `.claude/knowledge/project-skill.md` and then follow
-> `.claude/playbooks/feature-development.md` to add a new feature."*
+Backups include:
+
+- `pg_all_<timestamp>.sql` — full PostgreSQL dump (`pg_dumpall`)
+- `mongo_<timestamp>/` — MongoDB dump (`mongodump`)
+
+Recommended schedule: daily, before automated model runs.
+
+## Docker Compose commands
+
+```bash
+docker compose up -d          # start the full stack
+docker compose ps             # check status (should show healthy)
+docker compose down           # stop (preserves data volumes)
+docker compose down -v        # stop and destroy volumes (fresh start)
+docker compose logs -f         # tail logs
+docker exec -it quant-postgres psql -U postgres   # interactive psql
+docker exec -it quant-mongo mongosh                # interactive mongosh
+```
+
+## Directory structure
+
+```text
+.
+├── docker-compose.yml              # PostgreSQL + MongoDB core services
+├── init-scripts/                   # Run on first container start
+│   ├── 01_create_databases.sql
+│   ├── 02_enable_timescaledb.sql
+│   ├── 03_schema_csm_set.sql
+│   ├── 04_schema_gateway.sql
+│   └── mongo-init.js
+├── scripts/
+│   └── backup.sh                   # Backup PostgreSQL + MongoDB
+├── .env.example                    # Credentials template
+├── src/                            # Python source (connectivity layer)
+├── tests/                          # pytest suite
+├── docs/
+│   └── plans/
+│       └── ROADMAP.md              # Master roadmap
+├── .claude/                        # AI agent context & playbooks
+├── .github/                        # CI/CD workflows, issue/PR templates
+├── pyproject.toml                  # uv project config + tool settings
+├── uv.lock                         # Locked dependency versions
+└── README.md
+```
 
 ## Security scanning
 
@@ -148,13 +207,7 @@ Both run automatically on a weekly CI schedule (`.github/workflows/security.yml`
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide,
-conventional commit format, and quality gate expectations. Pull requests are
-welcome — use the PR template to provide context.
-
-## Security
-
-Report vulnerabilities privately to **bad.sonsuk@gmail.com** rather than
-opening a public issue. See [SECURITY.md](SECURITY.md) for the full policy.
+conventional commit format, and quality gate expectations.
 
 ## License
 

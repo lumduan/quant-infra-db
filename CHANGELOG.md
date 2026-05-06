@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 1)
+
+- **Project Bootstrap:** Docker Compose stack (PostgreSQL + TimescaleDB + MongoDB) on `quant-network`.
+- `docker-compose.yml` with healthchecks, named volumes, and external network configuration.
+- Init scripts: `01_create_databases.sql`, `02_enable_timescaledb.sql`, `03_schema_csm_set.sql`, `04_schema_gateway.sql`, `mongo-init.js`.
+- Python connectivity layer: Pydantic Settings config, asyncpg pool, motor client, typed exceptions.
+- `scripts/backup.sh` for PostgreSQL (`pg_dumpall`) and MongoDB (`mongodump`).
+- Unit tests (`test_config.py`) and integration tests (`test_postgres.py`, `test_mongo.py`, `test_infra.py`).
+- Updated `README.md` with setup instructions, connection strings, and backup workflow.
+
+### Changed
+
+- Renamed project from `python-template` to `quant-infra-db`.
+- Updated `.env.example` with PostgreSQL and MongoDB variables.
+
+## [0.1.0] — 2026-05-06
+
 ### Added
 - Initial template scaffold: `src/`, `tests/`, `docs/`, `.claude/`, `.github/`.
 - `pyproject.toml` with `ruff`, `mypy`, `pytest`, `pytest-asyncio`, `pytest-cov`, `bandit`, `pip-audit`.
@@ -17,4 +34,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI-agent enablement: `.claude/knowledge/project-skill.md`, `.claude/playbooks/feature-development.md`, `.claude/prompts/Prompt-Engineer.prompt.md`.
 - Issue templates (bug, feature), PR template, `FUNDING.yml`.
 
-[Unreleased]: https://github.com/OWNER/REPO/compare/HEAD...HEAD
+[Unreleased]: https://github.com/OWNER/REPO/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/OWNER/REPO/releases/tag/v0.1.0

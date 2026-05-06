@@ -23,19 +23,19 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 
 ### 1.1 Project structure
 
-- [ ] Create the project folder `infra-db/`
-- [ ] Create `README.md` describing the overview, install steps, and connection strings
-- [ ] Create `.env.example` — template for credentials (no real values)
-- [ ] Create `.gitignore`:
+- [x] Create the project folder `infra-db/`
+- [x] Create `README.md` describing the overview, install steps, and connection strings
+- [x] Create `.env.example` — template for credentials (no real values)
+- [x] Create `.gitignore`:
   - Do not commit the real `.env`
   - Do not commit `backups/`
-- [ ] Push the project to GitHub (private repository)
+- [-] Push the project to GitHub (private repository) — deferred, repo already exists
 
 **Exit criteria:** project skeleton is complete; no real credentials are present in the repository.
 
 ### 1.2 Docker Compose — Core services
 
-- [ ] Create `docker-compose.yml` with the core services:
+- [x] Create `docker-compose.yml` with the core services:
   ```yaml
   services:
     postgres:
@@ -64,25 +64,25 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
     postgres_data:
     mongo_data:
   ```
-- [ ] Verify: `docker compose up -d` → both containers start with no error
+- [x] Verify: `docker compose up -d` → both containers start with no error
 
 **Exit criteria:** `docker compose ps` shows `postgres` and `mongodb` with status `Up`.
 
 ### 1.3 Docker network `quant-network`
 
-- [ ] Create the external network before running compose:
+- [x] Create the external network before running compose:
   ```bash
   docker network create quant-network
   ```
-- [ ] Add network configuration to `docker-compose.yml` so every container joins `quant-network`:
+- [x] Add network configuration to `docker-compose.yml` so every container joins `quant-network`:
   ```yaml
   networks:
     default:
       name: quant-network
       external: true
   ```
-- [ ] Document the network creation command in `README.md` (one-time setup per host)
-- [ ] Verify: a container in another service can ping `quant-postgres` and `quant-mongo` by hostname
+- [x] Document the network creation command in `README.md` (one-time setup per host)
+- [x] Verify: a container in another service can ping `quant-postgres` and `quant-mongo` by hostname
 
 **Exit criteria:** containers communicate via hostname; no IP address required.
 
@@ -94,19 +94,19 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 
 ### 2.1 Create logical databases
 
-- [ ] Create init script `init-scripts/01_create_databases.sql`:
+- [x] Create init script `init-scripts/01_create_databases.sql`:
   ```sql
   CREATE DATABASE db_csm_set;
   CREATE DATABASE db_gateway;
   ```
-- [ ] Verify: `docker exec -it quant-postgres psql -U postgres -l`
+- [x] Verify: `docker exec -it quant-postgres psql -U postgres -l`
   → both `db_csm_set` and `db_gateway` appear in the list
 
 **Exit criteria:** both databases are created automatically after `docker compose up`.
 
 ### 2.2 Enable the TimescaleDB extension
 
-- [ ] Create init script `init-scripts/02_enable_timescaledb.sql`:
+- [x] Create init script `init-scripts/02_enable_timescaledb.sql`:
   ```sql
   \c db_csm_set
   CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -114,16 +114,16 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   \c db_gateway
   CREATE EXTENSION IF NOT EXISTS timescaledb;
   ```
-- [ ] Verify: `SELECT extname, extversion FROM pg_extension WHERE extname = 'timescaledb';`
+- [x] Verify: `SELECT extname, extversion FROM pg_extension WHERE extname = 'timescaledb';`
   inside both `db_csm_set` and `db_gateway`
-- [ ] Record the TimescaleDB version in `README.md`
+- [x] Record the TimescaleDB version in `README.md`
 
 **Exit criteria:** the `timescaledb` extension is available in both databases.
 
 ### 2.3 Schema for `db_csm_set`
 
-- [ ] Create init script `init-scripts/03_schema_csm_set.sql`
-- [ ] Table `equity_curve` — daily NAV per strategy:
+- [x] Create init script `init-scripts/03_schema_csm_set.sql`
+- [x] Table `equity_curve` — daily NAV per strategy:
   ```sql
   \c db_csm_set
 
@@ -135,7 +135,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   SELECT create_hypertable('equity_curve', 'time');
   CREATE INDEX ON equity_curve (strategy_id, time DESC);
   ```
-- [ ] Table `trade_history` — every trade record:
+- [x] Table `trade_history` — every trade record:
   ```sql
   CREATE TABLE trade_history (
       id          SERIAL      PRIMARY KEY,
@@ -149,7 +149,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   );
   CREATE INDEX ON trade_history (strategy_id, time DESC);
   ```
-- [ ] Table `backtest_log` — metadata for each backtest run:
+- [x] Table `backtest_log` — metadata for each backtest run:
   ```sql
   CREATE TABLE backtest_log (
       id          SERIAL      PRIMARY KEY,
@@ -161,14 +161,14 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
       summary     JSONB       -- sharpe, cagr, max_drawdown, etc.
   );
   ```
-- [ ] Verify: insert sample rows → queries return them correctly
+- [x] Verify: insert sample rows → queries return them correctly
 
 **Exit criteria:** schema is in place; `equity_curve` is a TimescaleDB hypertable.
 
 ### 2.4 Schema for `db_gateway`
 
-- [ ] Create init script `init-scripts/04_schema_gateway.sql`
-- [ ] Table `daily_performance` — daily performance from every strategy:
+- [x] Create init script `init-scripts/04_schema_gateway.sql`
+- [x] Table `daily_performance` — daily performance from every strategy:
   ```sql
   \c db_gateway
 
@@ -185,7 +185,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   SELECT create_hypertable('daily_performance', 'time');
   CREATE INDEX ON daily_performance (strategy_id, time DESC);
   ```
-- [ ] Table `portfolio_snapshot` — combined snapshot across all strategies for a given date:
+- [x] Table `portfolio_snapshot` — combined snapshot across all strategies for a given date:
   ```sql
   CREATE TABLE portfolio_snapshot (
       time              TIMESTAMPTZ NOT NULL,
@@ -197,7 +197,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   );
   SELECT create_hypertable('portfolio_snapshot', 'time');
   ```
-- [ ] Verify: insert rows from two strategies → cross-strategy aggregation queries return the expected results
+- [x] Verify: insert rows from two strategies → cross-strategy aggregation queries return the expected results
 
 **Exit criteria:** schema is in place; aggregation across multiple strategies works.
 
@@ -209,7 +209,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 
 ### 3.1 Create collections and indexes
 
-- [ ] Create init script `init-scripts/mongo-init.js`:
+- [x] Create init script `init-scripts/mongo-init.js`:
   ```javascript
   // Database for the CSM-SET strategy
   db = db.getSiblingDB('csm_logs');
@@ -222,14 +222,14 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   db.model_params.createIndex({ strategy_id: 1, version: -1 });
   db.signal_snapshots.createIndex({ strategy_id: 1, date: -1 });
   ```
-- [ ] Verify: `docker exec -it quant-mongo mongosh csm_logs --eval "show collections"`
+- [x] Verify: `docker exec -it quant-mongo mongosh csm_logs --eval "show collections"`
   → the created collections are listed
 
 **Exit criteria:** MongoDB collections and indexes are created automatically after `docker compose up`.
 
 ### 3.2 Connectivity smoke test from Python
 
-- [ ] Test PostgreSQL via `psycopg2`:
+- [x] Test PostgreSQL via `psycopg2`:
   ```python
   import psycopg2
   conn = psycopg2.connect(
@@ -239,7 +239,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   cur.execute("SELECT version();")
   print(cur.fetchone())
   ```
-- [ ] Test MongoDB via `pymongo`:
+- [x] Test MongoDB via `pymongo`:
   ```python
   from pymongo import MongoClient
   client = MongoClient("mongodb://localhost:27017/")
@@ -248,7 +248,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   assert db.backtest_results.count_documents({}) > 0
   print("MongoDB OK")
   ```
-- [ ] Record the connection strings in `README.md` (use `<pass>` as a placeholder, never the real password)
+- [x] Record the connection strings in `README.md` (use `<pass>` as a placeholder, never the real password)
 
 **Exit criteria:** both PostgreSQL and MongoDB accept Python connections successfully.
 
@@ -260,7 +260,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 
 ### 4.1 Health check
 
-- [ ] Add `healthcheck:` blocks in `docker-compose.yml`:
+- [x] Add `healthcheck:` blocks in `docker-compose.yml`:
   ```yaml
   # PostgreSQL
   postgres:
@@ -280,14 +280,14 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
       retries: 3
       start_period: 10s
   ```
-- [ ] Verify: `docker compose ps` shows `(healthy)` for every container
+- [x] Verify: `docker compose ps` shows `(healthy)` for every container
 
 **Exit criteria:** containers report `healthy`, not just `running`.
 
 ### 4.2 Backup script
 
-- [ ] Create the `backups/` folder (gitignored)
-- [ ] Create `scripts/backup.sh`:
+- [x] Create the `backups/` folder (gitignored)
+- [x] Create `scripts/backup.sh`:
   ```bash
   #!/usr/bin/env bash
   set -euo pipefail
@@ -308,15 +308,15 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
       "$BACKUP_DIR/mongo_${DATE}"
   echo "MongoDB backup saved: mongo_${DATE}/"
   ```
-- [ ] Verify: `bash scripts/backup.sh` → all backup files are produced
-- [ ] Restore from a backup at least once to verify the procedure
-- [ ] Document the backup schedule in `README.md` (recommended: daily, before model runs)
+- [x] Verify: `bash scripts/backup.sh` → all backup files are produced
+- [x] Restore from a backup at least once to verify the procedure
+- [x] Document the backup schedule in `README.md` (recommended: daily, before model runs)
 
 **Exit criteria:** the backup script works end-to-end and data can be restored from a backup.
 
 ### 4.3 Connection-string reference
 
-- [ ] Record every connection string in `README.md`:
+- [x] Record every connection string in `README.md`:
   ```
   # CSM-SET → PostgreSQL
   postgresql://postgres:<pass>@quant-postgres:5432/db_csm_set
@@ -327,7 +327,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
   # CSM-SET logs → MongoDB
   mongodb://quant-mongo:27017/csm_logs
   ```
-- [ ] Provide `.env.example` with the required variables:
+- [x] Provide `.env.example` with the required variables:
   ```env
   POSTGRES_PASSWORD=your_strong_password_here
   ```
@@ -391,9 +391,10 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 
 > Update this section as each phase completes.
 
-- **Active phase:** Phase 1 — Project Bootstrap
-- **Completed phases:** (none yet)
+- **Active phase:** Phase 1 — Project Bootstrap (complete)
+- **Completed phases:** Phase 1 (2026-05-06)
 - **Blocked by:** nothing
+- **Next:** Phase 2+ schema and connectivity validated; ready for downstream integration
 
 ---
 
