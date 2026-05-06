@@ -137,12 +137,18 @@ restore_postgres() {
         exit 1
     fi
     echo "=== Restoring PostgreSQL from pg_all_${ts}.sql ==="
-    docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" quant-postgres \
-        psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS db_csm_set;" >/dev/null
-    docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" quant-postgres \
-        psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS db_gateway;" >/dev/null
-    docker exec -i -e PGPASSWORD="${POSTGRES_PASSWORD}" quant-postgres \
-        psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "${dump}" >/dev/null
+    # The dump (pg_dumpall --clean --if-exists) is idempotent against existing
+    # databases, but pg_dumpall always emits DROP/CREATE ROLE for the cluster
+    # superuser. Both fail when replayed against a live cluster: psql cannot
+    # drop the role it is currently authenticated as, and the subsequent
+    # CREATE collides with the existing role. Stripping just those two lines
+    # leaves the trailing ALTER ROLE ... PASSWORD ... intact, which keeps the
+    # role's attributes in sync with the dump.
+    sed -e '/^DROP ROLE IF EXISTS postgres;$/d' \
+        -e '/^CREATE ROLE postgres;$/d' \
+        "${dump}" \
+    | docker exec -i -e PGPASSWORD="${POSTGRES_PASSWORD}" quant-postgres \
+        psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q >/dev/null
     echo "PostgreSQL restore complete."
 }
 

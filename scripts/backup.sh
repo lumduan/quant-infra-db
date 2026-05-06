@@ -55,8 +55,12 @@ require_healthy quant-postgres
 require_healthy quant-mongo
 
 echo "=== Backing up PostgreSQL ==="
+# --clean --if-exists makes the dump idempotent on replay: DROP statements
+# precede every CREATE, guarded by IF EXISTS, so restore.sh can target a
+# populated cluster without role/database collisions.
 docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" quant-postgres \
-    pg_dumpall -U postgres > "${BACKUP_DIR}/pg_all_${DATE}.sql"
+    pg_dumpall -U postgres --clean --if-exists \
+    > "${BACKUP_DIR}/pg_all_${DATE}.sql"
 echo "PostgreSQL backup saved: pg_all_${DATE}.sql"
 
 echo "=== Backing up MongoDB ==="
