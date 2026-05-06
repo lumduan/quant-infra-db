@@ -16,7 +16,7 @@ Secrets detection, injection prevention, credential validation, Docker security,
 - No `privileged: true` unless explicitly justified.
 - Images pinned to stable tags; `latest` used only in development.
 - `pg_isready` and `mongosh ping` healthchecks — no custom scripts that could leak data.
-- Named volumes for persistent data; no host-mounted directories with sensitive paths.
+- Bind-mounted project directories (`./postgres_data/`, `./mongo_data/`) for persistent data; gitignored to prevent accidental commit.
 
 ### Input Validation
 - Validate at every system boundary (HTTP routes, CLI, file I/O).

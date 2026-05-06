@@ -47,7 +47,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
       ports:
         - "5432:5432"
       volumes:
-        - postgres_data:/var/lib/postgresql/data
+        - ./postgres_data:/var/lib/postgresql/data
         - ./init-scripts:/docker-entrypoint-initdb.d
 
     mongodb:
@@ -57,12 +57,9 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
       ports:
         - "27017:27017"
       volumes:
-        - mongo_data:/data/db
+        - ./mongo_data:/data/db
         - ./init-scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
 
-  volumes:
-    postgres_data:
-    mongo_data:
   ```
 - [x] Verify: `docker compose up -d` → both containers start with no error
 

@@ -13,7 +13,7 @@ Ensure module boundaries, async patterns, type safety, and Docker Compose topolo
 
 ### Docker Compose Topology
 - Verify containers use `quant-network` and communicate by hostname.
-- Check named volumes are declared and used consistently.
+- Check bind-mounted data directories are declared and used consistently.
 - Validate `container_name`, `restart`, and environment variable usage.
 - Ensure healthcheck blocks follow the project pattern.
 

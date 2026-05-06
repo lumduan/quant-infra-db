@@ -31,7 +31,7 @@ description: Provides architectural guidance and ensures code quality standards 
 
 ### Docker Compose Validation
 - Containers use `quant-network` (external, created once per host)
-- Named volumes declared for persistent data
+- Bind-mounted project directories for persistent data
 - Healthcheck blocks on every service
 - Environment variables from `.env`, never hard-coded
 - Services communicate by hostname, not IP

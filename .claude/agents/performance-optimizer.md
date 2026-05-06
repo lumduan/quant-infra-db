@@ -14,7 +14,7 @@ Query performance tuning, index optimization, Docker resource profiling, and Pyt
 
 ### Docker Resource Tuning
 - Review container memory and CPU limits in `docker-compose.yml`.
-- Check volume mount performance (named volumes vs. bind mounts).
+- Check bind-mount I/O performance (macOS osxfs adds overhead vs. Linux native).
 - Monitor container restart behavior and healthcheck timing.
 - Profile `postgres` shared_buffers and TimescaleDB chunk settings.
 

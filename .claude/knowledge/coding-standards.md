@@ -66,7 +66,7 @@ Concrete, enforceable rules. If you can't comply, document why in code with a co
 
 ## Docker Compose
 
-- Service definitions declare `container_name`, `restart: always`, environment variables from `.env`, and named volumes.
+- Service definitions declare `container_name`, `restart: always`, environment variables from `.env`, and bind-mounted project directories for persistent data.
 - Every service has a `healthcheck` block (pg_isready for PostgreSQL, mongosh ping for MongoDB).
 - Network is external (`quant-network`), created once per host.
 - Ports are exposed only for local development; in production, services on the shared network use internal hostnames.

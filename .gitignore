@@ -54,5 +54,9 @@ Thumbs.db
 # Backups (created by scripts/backup.sh)
 backups/
 
+# Database data directories (bind-mounted into containers)
+postgres_data/
+mongo_data/
+
 # Claude Code local settings
 .claude/settings.local.json

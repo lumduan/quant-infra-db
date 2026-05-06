@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Renamed project from `python-template` to `quant-infra-db`.
 - Updated `.env.example` with PostgreSQL and MongoDB variables.
+- Migrated DB data storage from Docker named volumes (`quant-infra-db_postgres_data`, `quant-infra-db_mongo_data`) to project-root bind mounts (`./postgres_data/`, `./mongo_data/`) for direct filesystem visibility and portability. Removed the top-level `volumes:` section from `docker-compose.yml`.
 
 ## [0.1.0] — 2026-05-06
 

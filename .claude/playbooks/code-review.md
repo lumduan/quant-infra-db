@@ -26,7 +26,7 @@ For reviewing PRs / diffs. Read tests first; they document intent.
   - File size budget respected
 - DB-specific checks:
   - Init scripts: numbered, idempotent (`IF NOT EXISTS`), ordered by dependency.
-  - Docker Compose: healthchecks present, named volumes, env vars from `.env`.
+  - Docker Compose: healthchecks present, bind-mounted data directories, env vars from `.env`.
   - No real credentials committed.
 - Cross-cutting suspects (auto-flag):
   - `requests` in async path → block.
