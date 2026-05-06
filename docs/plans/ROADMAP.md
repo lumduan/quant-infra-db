@@ -395,10 +395,10 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 
 > Update this section as each phase completes.
 
-- **Active phase:** Phase 4 — Operations & Health Check
-- **Completed phases:** Phase 1 (2026-05-06), Phase 2 (2026-05-06), Phase 3 (2026-05-06)
+- **Active phase:** Phase 5 — Downstream service integration (CSM-SET adapter, API Gateway wiring)
+- **Completed phases:** Phase 1 (2026-05-06), Phase 2 (2026-05-06), Phase 3 (2026-05-06), Phase 4 (2026-05-06)
 - **Blocked by:** nothing
-- **Next:** Phase 4 (Operations & Health Check) — healthcheck verification, backup testing, connection-string reference
+- **Next:** Wire the CSM-SET strategy adapter to `db_csm_set` and `csm_logs`; provision the API Gateway service against `db_gateway`. Phase 4 completion record: [docs/plans/phase_4_operations_health_check/phase_4_operations_health_check.md](phase_4_operations_health_check/phase_4_operations_health_check.md).
 
 ---
 
