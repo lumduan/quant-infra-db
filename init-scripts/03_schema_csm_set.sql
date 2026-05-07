@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS equity_curve (
     equity      DOUBLE PRECISION NOT NULL
 );
 SELECT create_hypertable('equity_curve', 'time', if_not_exists => TRUE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_equity_curve_time_strategy
+    ON equity_curve (time, strategy_id);
 CREATE INDEX IF NOT EXISTS idx_equity_curve_strategy_time
     ON equity_curve (strategy_id, time DESC);
 
@@ -21,6 +23,8 @@ CREATE TABLE IF NOT EXISTS trade_history (
     price       DOUBLE PRECISION NOT NULL,
     commission  DOUBLE PRECISION DEFAULT 0
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trade_history_dedup
+    ON trade_history (strategy_id, time, symbol, side);
 CREATE INDEX IF NOT EXISTS idx_trade_history_strategy_time
     ON trade_history (strategy_id, time DESC);
 

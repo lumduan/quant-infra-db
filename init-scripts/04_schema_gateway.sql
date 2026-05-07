@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS daily_performance (
     metadata        JSONB
 );
 SELECT create_hypertable('daily_performance', 'time', if_not_exists => TRUE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_perf_time_strategy
+    ON daily_performance (time, strategy_id);
 CREATE INDEX IF NOT EXISTS idx_daily_performance_strategy_time
     ON daily_performance (strategy_id, time DESC);
 
@@ -26,3 +28,5 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshot (
     allocation        JSONB
 );
 SELECT create_hypertable('portfolio_snapshot', 'time', if_not_exists => TRUE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_snapshot_time
+    ON portfolio_snapshot (time);
