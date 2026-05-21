@@ -58,6 +58,15 @@ echo "=== Backing up PostgreSQL ==="
 # --clean --if-exists makes the dump idempotent on replay: DROP statements
 # precede every CREATE, guarded by IF EXISTS, so restore.sh can target a
 # populated cluster without role/database collisions.
+#
+# Tables included in the dump (operator reference; not exhaustive):
+#   db_csm_set:  equity_curve, trade_history, backtest_log,
+#                benchmark_equity_curve                       (Phase 2)
+#   db_gateway:  daily_performance, portfolio_snapshot,
+#                strategy_report_snapshot                     (Phase 2)
+#   TimescaleDB continuous aggregates:
+#                cagg_trade_history_monthly      (db_csm_set, Phase 2)
+#                cagg_daily_performance_monthly  (db_gateway, Phase 2)
 docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" quant-postgres \
     pg_dumpall -U postgres --clean --if-exists \
     > "${BACKUP_DIR}/pg_all_${DATE}.sql"

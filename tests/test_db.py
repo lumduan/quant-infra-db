@@ -5,6 +5,7 @@ from src.db.errors import (
     DatabaseConnectionError,
     MongoConnectionError,
     PostgresConnectionError,
+    RepositoryError,
 )
 from src.db.mongo import check_mongo_health, close_mongo_client, create_mongo_client
 from src.db.postgres import check_postgres_health, close_postgres_pool, create_postgres_pool
@@ -21,6 +22,9 @@ class TestErrors:
 
     def test_mongo_connection_error_chain(self) -> None:
         assert issubclass(MongoConnectionError, DatabaseConnectionError)
+
+    def test_repository_error_chain(self) -> None:
+        assert issubclass(RepositoryError, DatabaseConnectionError)
 
 
 class TestPostgresPool:
