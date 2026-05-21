@@ -8,3 +8,7 @@ class PostgresConnectionError(DatabaseConnectionError):
 
 class MongoConnectionError(DatabaseConnectionError):
     """MongoDB connection or query failure."""
+
+
+class RepositoryError(DatabaseConnectionError):
+    """Repository-layer failure (e.g. INSERT/UPDATE/SELECT against an asyncpg pool)."""

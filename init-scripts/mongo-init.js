@@ -22,6 +22,20 @@ db = db.getSiblingDB('csm_logs');
 
 // Each backtest run produces one document containing equity curves,
 // summary statistics, and configuration metadata.
+//
+// As of the Strategies-Report-Metrics feature (Phase 2), csm-set writes
+// the following additional keys into each `backtest_results` document
+// (no schema change — MongoDB is schema-less so these land automatically):
+//   metrics.headline               — total_pnl, profit_factor, total_trades, …
+//   metrics.profit_structure       — gross_profit, gross_loss, …
+//   metrics.returns                — { all, long, short } daily/monthly returns
+//   metrics.benchmark_comparison   — alpha, beta vs buy-and-hold benchmark
+//   metrics.risk_adjusted          — sharpe, sortino, calmar, …
+//   metrics.pnl_distribution       — histogram buckets
+//   metrics.trades_analysis        — winners/losers, avg holding bars
+//   metrics.capital_efficiency     — margin usage, capital_used
+//   metrics.runups_drawdowns       — top N run-up + drawdown windows
+// The matching Pydantic schema lives in quant-api-gateway (Phase 3).
 db.createCollection('backtest_results');
 
 // Model hyperparameter sets are versioned so that every backtest can

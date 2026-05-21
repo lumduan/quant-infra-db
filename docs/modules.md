@@ -120,6 +120,35 @@ Close the MongoDB client.
 
 - **Args:** `client` — a Motor client to close.
 
+## `src/db/models.py` — Pydantic V2 Row Models (Phase 2)
+
+Frozen row models that map 1:1 to rows in the Phase 2 schema. Monetary fields
+are `Decimal`; timestamps are tz-aware UTC `datetime`.
+
+| Model | Maps to |
+|---|---|
+| `TradeHistoryRow` | `db_csm_set.trade_history` (including the four Phase 2 P&L columns) |
+| `BenchmarkEquityCurveRow` | `db_csm_set.benchmark_equity_curve` |
+| `StrategyReportSnapshotRow` | `db_gateway.strategy_report_snapshot` |
+
+`side` is constrained to `{LONG, SHORT, BUY, SELL, HOLD}`. Naive datetimes are
+coerced to UTC at construction; non-UTC tz-aware datetimes are rejected.
+
+## `src/db/repositories.py` — Async asyncpg Helpers (Phase 2)
+
+Each function takes an `asyncpg.Pool` and wraps `INSERT … ON CONFLICT (…) DO
+UPDATE SET …` against the UNIQUE indexes declared in the SQL layer. Failures
+raise `RepositoryError`.
+
+| Function | Signature |
+|---|---|
+| `upsert_trade_history` | `(pool, rows: Sequence[TradeHistoryRow]) -> int` |
+| `fetch_trade_history` | `(pool, *, strategy_id, since=None, limit=1000) -> list[TradeHistoryRow]` |
+| `upsert_benchmark_equity` | `(pool, rows: Sequence[BenchmarkEquityCurveRow]) -> int` |
+| `fetch_benchmark_curve` | `(pool, *, strategy_id, benchmark_symbol, since=None) -> list[BenchmarkEquityCurveRow]` |
+| `upsert_strategy_report` | `(pool, row: StrategyReportSnapshotRow) -> None` |
+| `fetch_strategy_report` | `(pool, *, strategy_id, at_time) -> StrategyReportSnapshotRow \| None` |
+
 ## `src/db/errors.py` — Error Hierarchy
 
 Module-local exceptions, all inheriting from a single root.
@@ -127,7 +156,8 @@ Module-local exceptions, all inheriting from a single root.
 ```
 DatabaseConnectionError(Exception)
 ├── PostgresConnectionError(DatabaseConnectionError)
-└── MongoConnectionError(DatabaseConnectionError)
+├── MongoConnectionError(DatabaseConnectionError)
+└── RepositoryError(DatabaseConnectionError)
 ```
 
 ### Usage
@@ -176,6 +206,8 @@ All scripts are idempotent.
 | `02_enable_timescaledb.sql` | db_csm_set, db_gateway | Enables TimescaleDB extension on both databases |
 | `03_schema_csm_set.sql` | db_csm_set | Creates `equity_curve` (hypertable), `trade_history`, `backtest_log` |
 | `04_schema_gateway.sql` | db_gateway | Creates `daily_performance` (hypertable), `portfolio_snapshot` (hypertable) |
+| `05_schema_strategy_report.sql` | db_csm_set, db_gateway | Phase 2: extends `trade_history` (now a hypertable with 4 P&L columns + relaxed `side` CHECK); creates `benchmark_equity_curve` (hypertable, db_csm_set) and `strategy_report_snapshot` (hypertable, db_gateway) |
+| `06_continuous_aggregates.sql` | db_csm_set, db_gateway | Phase 2: continuous aggregates `cagg_trade_history_monthly` (db_csm_set) and `cagg_daily_performance_monthly` (db_gateway) + refresh policies (every 1h, 2h lag) |
 | `mongo-init.js` | csm_logs | Creates collections `backtest_results`, `model_params`, `signal_snapshots` with indexes |
 
 ### Schema reference — `db_csm_set`
@@ -183,8 +215,10 @@ All scripts are idempotent.
 | Table | Type | Key columns |
 |---|---|---|
 | `equity_curve` | Hypertable (time) | `time`, `strategy_id`, `equity` |
-| `trade_history` | Regular | `id` (PK), `time`, `strategy_id`, `symbol`, `side`, `quantity`, `price`, `commission` |
+| `trade_history` | Hypertable (time) | `id` (PK part), `time` (PK part), `strategy_id`, `symbol`, `side` (`LONG`/`SHORT`/`BUY`/`SELL`/`HOLD`), `quantity`, `price`, `commission`, `entry_price` (NUMERIC), `exit_price` (NUMERIC), `realized_pnl` (NUMERIC), `duration_bars` |
 | `backtest_log` | Regular | `id` (PK), `run_id` (UNIQUE), `strategy_id`, `started_at`, `finished_at`, `config` (JSONB), `summary` (JSONB) |
+| `benchmark_equity_curve` | Hypertable (time) | `time`, `strategy_id`, `benchmark_symbol`, `equity` (NUMERIC) — UNIQUE `(time, strategy_id, benchmark_symbol)` |
+| `cagg_trade_history_monthly` | Continuous aggregate | `strategy_id`, `bucket` (1 month), `wins`, `losses`, `net_pnl` |
 
 ### Schema reference — `db_gateway`
 
@@ -192,6 +226,8 @@ All scripts are idempotent.
 |---|---|---|
 | `daily_performance` | Hypertable (time) | `time`, `strategy_id`, `daily_return`, `cumulative_return`, `total_value`, `cash_balance`, `max_drawdown`, `sharpe_ratio`, `metadata` (JSONB) |
 | `portfolio_snapshot` | Hypertable (time) | `time`, `total_portfolio`, `weighted_return`, `combined_drawdown`, `active_strategies`, `allocation` (JSONB) |
+| `strategy_report_snapshot` | Hypertable (time) | `time`, `strategy_id`, `report` (JSONB), `computed_at` — UNIQUE `(time, strategy_id)` |
+| `cagg_daily_performance_monthly` | Continuous aggregate | `strategy_id`, `bucket` (1 month), `avg_daily_return`, `worst_max_drawdown`, `month_end_value` |
 
 ### MongoDB collections — `csm_logs`
 
