@@ -110,6 +110,38 @@ For single-test iteration:
 uv run pytest tests/<path>::<test_name> -v
 ```
 
+## Pre-Push / Pre-PR Gate (mirror GitHub CI)
+
+Before any `git commit` that will be pushed, and ALWAYS before `git push` or
+opening a PR, run the full gate that mirrors `.github/workflows/ci.yml` and
+`.github/workflows/security.yml`. If any step fails, fix it locally — never
+push and let CI fail.
+
+```bash
+uv sync --all-groups --frozen \
+  && uv run ruff check . \
+  && uv run ruff format --check . \
+  && uv run mypy src tests \
+  && uv run pytest -v \
+  && uv run bandit -r src \
+  && uv run pip-audit
+```
+
+When `pip-audit` reports CVEs in **transitive** deps (idna, urllib3, etc.),
+bump them via:
+
+```bash
+uv lock --upgrade-package <pkg1> --upgrade-package <pkg2>
+uv sync --all-groups --frozen
+uv run pip-audit            # confirm clean (exit 0)
+```
+
+Then commit the updated `uv.lock` as `chore(deps): bump <pkg> for <CVE-id>`.
+
+Note: `pip-audit` prints `Dependency not found on PyPI ... quant-infra-db` —
+that is informational (the project itself is not published). What matters is
+the exit code (`0` = pass) and the absence of `Found N known vulnerabilities`.
+
 ## Code Review Checklist
 
 When reviewing code (your own or others'):
