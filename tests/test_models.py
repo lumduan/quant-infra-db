@@ -1,14 +1,17 @@
 """Unit tests for Pydantic V2 row models (no DB access)."""
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 from src.db.models import (
     BenchmarkEquityCurveRow,
+    CorporateActionRow,
+    OHLCVBarRow,
     StrategyReportSnapshotRow,
     TradeHistoryRow,
+    UniverseMembershipRow,
 )
 
 
@@ -192,3 +195,124 @@ class TestStrategyReportSnapshotRow:
                 report={},
                 computed_at=datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=7))),
             )
+
+
+def _make_bar(**overrides: object) -> OHLCVBarRow:
+    base: dict[str, object] = {
+        "symbol": "SET:PTT",
+        "timeframe": "1d",
+        "ts": datetime(2026, 5, 29, tzinfo=UTC),
+        "open": Decimal("100.0"),
+        "high": Decimal("102.0"),
+        "low": Decimal("98.0"),
+        "close": Decimal("101.0"),
+        "volume": Decimal("1000"),
+    }
+    base.update(overrides)
+    return OHLCVBarRow(**base)  # type: ignore[arg-type]
+
+
+class TestOHLCVBarRow:
+    def test_minimal_valid_equity_bar(self) -> None:
+        row = _make_bar()
+        assert row.open_interest is None
+        assert row.source == "tvkit"
+        assert row.ingested_at is None
+        assert isinstance(row.close, Decimal)
+
+    def test_futures_bar_with_open_interest(self) -> None:
+        row = _make_bar(symbol="S501!", open_interest=Decimal("412330.0"))
+        assert row.open_interest == Decimal("412330.0")
+
+    @pytest.mark.parametrize("tf", ["1d", "1h", "5m"])
+    def test_allowed_timeframes(self, tf: str) -> None:
+        assert _make_bar(timeframe=tf).timeframe == tf
+
+    def test_bad_timeframe_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="timeframe must be one of"):
+            _make_bar(timeframe="15m")
+
+    def test_naive_ts_coerced_to_utc(self) -> None:
+        row = _make_bar(ts=datetime(2026, 5, 29, 7, 0))
+        assert row.ts.tzinfo is UTC
+
+    def test_non_utc_ts_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="datetime must be UTC"):
+            _make_bar(ts=datetime(2026, 5, 29, tzinfo=timezone(timedelta(hours=7))))
+
+    def test_non_positive_price_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_bar(close=Decimal("0"))
+
+    def test_negative_volume_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_bar(volume=Decimal("-1"))
+
+    def test_negative_open_interest_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_bar(open_interest=Decimal("-1"))
+
+    def test_high_below_low_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="must be >= low"):
+            _make_bar(high=Decimal("90"), low=Decimal("95"))
+
+    def test_empty_symbol_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_bar(symbol="")
+
+    def test_ingested_at_non_utc_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="datetime must be UTC"):
+            _make_bar(ingested_at=datetime(2026, 5, 29, tzinfo=timezone(timedelta(hours=7))))
+
+    def test_frozen(self) -> None:
+        row = _make_bar()
+        with pytest.raises(ValidationError):
+            row.close = Decimal("1")
+
+
+class TestCorporateActionRow:
+    def test_valid_split(self) -> None:
+        row = CorporateActionRow(
+            symbol="SET:PTT",
+            ex_date=date(2026, 5, 29),
+            action_type="split",
+            ratio=Decimal("0.5"),
+            amount=Decimal("2"),
+        )
+        assert row.action_type == "split"
+        assert row.ratio == Decimal("0.5")
+
+    @pytest.mark.parametrize("action", ["split", "dividend", "roll"])
+    def test_allowed_action_types(self, action: str) -> None:
+        row = CorporateActionRow(symbol="X", ex_date=date(2026, 1, 1), action_type=action)
+        assert row.action_type == action
+
+    def test_bad_action_type_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="action_type must be one of"):
+            CorporateActionRow(symbol="X", ex_date=date(2026, 1, 1), action_type="merger")
+
+    def test_non_positive_ratio_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            CorporateActionRow(
+                symbol="X", ex_date=date(2026, 1, 1), action_type="split", ratio=Decimal("0")
+            )
+
+    def test_optional_fields_default_none(self) -> None:
+        row = CorporateActionRow(symbol="X", ex_date=date(2026, 1, 1), action_type="roll")
+        assert row.ratio is None
+        assert row.amount is None
+        assert row.note is None
+
+
+class TestUniverseMembershipRow:
+    def test_valid_row_default_index(self) -> None:
+        row = UniverseMembershipRow(as_of=date(2026, 5, 1), symbol="SET:PTT")
+        assert row.index_name == "SET"
+
+    def test_explicit_index(self) -> None:
+        row = UniverseMembershipRow(as_of=date(2026, 5, 1), symbol="SET:PTT", index_name="SET50")
+        assert row.index_name == "SET50"
+
+    def test_empty_symbol_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UniverseMembershipRow(as_of=date(2026, 5, 1), symbol="")

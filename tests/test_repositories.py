@@ -1,7 +1,7 @@
 """Unit tests for src/db/repositories.py with mocked asyncpg pools."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,16 +9,23 @@ import pytest
 from src.db.errors import RepositoryError
 from src.db.models import (
     BenchmarkEquityCurveRow,
+    CorporateActionRow,
+    OHLCVBarRow,
     StrategyReportSnapshotRow,
     TradeHistoryRow,
+    UniverseMembershipRow,
 )
 from src.db.repositories import (
     fetch_benchmark_curve,
+    fetch_ohlcv,
     fetch_strategy_report,
     fetch_trade_history,
     upsert_benchmark_equity,
+    upsert_corporate_actions,
+    upsert_ohlcv,
     upsert_strategy_report,
     upsert_trade_history,
+    upsert_universe_membership,
 )
 
 
@@ -284,3 +291,157 @@ class TestFetchStrategyReport:
             await fetch_strategy_report(
                 pool, strategy_id="csm-set-01", at_time=datetime(2026, 1, 2, tzinfo=UTC)
             )
+
+
+def _make_bar(**overrides: object) -> OHLCVBarRow:
+    base: dict[str, object] = {
+        "symbol": "SET:PTT",
+        "timeframe": "1d",
+        "ts": datetime(2026, 5, 29, tzinfo=UTC),
+        "open": Decimal("100.0"),
+        "high": Decimal("102.0"),
+        "low": Decimal("98.0"),
+        "close": Decimal("101.0"),
+        "volume": Decimal("1000"),
+    }
+    base.update(overrides)
+    return OHLCVBarRow(**base)  # type: ignore[arg-type]
+
+
+class TestUpsertOHLCV:
+    async def test_empty_input_short_circuits(self) -> None:
+        pool = MagicMock()
+        assert await upsert_ohlcv(pool, []) == 0
+        pool.acquire.assert_not_called()
+
+    async def test_executes_executemany_with_conflict_clause(self) -> None:
+        conn = MagicMock()
+        conn.executemany = AsyncMock()
+        pool = _mock_pool_with_conn(conn)
+        count = await upsert_ohlcv(pool, [_make_bar(), _make_bar(symbol="S501!")])
+        assert count == 2
+        sql_arg = conn.executemany.await_args.args[0]
+        payload_arg = conn.executemany.await_args.args[1]
+        assert "INSERT INTO market_data.ohlcv" in sql_arg
+        assert "ON CONFLICT (symbol, timeframe, ts)" in sql_arg
+        # 10 positional params per row (ingested_at is DB-defaulted, not inserted)
+        assert all(len(tup) == 10 for tup in payload_arg)
+
+    async def test_wraps_asyncpg_error(self) -> None:
+        conn = MagicMock()
+        conn.executemany = AsyncMock(side_effect=OSError("boom"))
+        pool = _mock_pool_with_conn(conn)
+        with pytest.raises(RepositoryError, match="upsert_ohlcv failed"):
+            await upsert_ohlcv(pool, [_make_bar()])
+
+
+class TestFetchOHLCV:
+    async def test_without_since_uses_three_param_query(self) -> None:
+        conn = MagicMock()
+        conn.fetch = AsyncMock(return_value=[])
+        pool = _mock_pool_with_conn(conn)
+        rows = await fetch_ohlcv(pool, symbol="SET:PTT", timeframe="1d")
+        assert rows == []
+        args = conn.fetch.await_args.args
+        assert "ORDER BY ts DESC" in args[0]
+        assert "ts >=" not in args[0]
+        assert args[1] == "SET:PTT"
+        assert args[2] == "1d"
+        assert args[3] == 1000  # default limit
+
+    async def test_with_since_uses_four_param_query(self) -> None:
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        record = {
+            "symbol": "SET:PTT",
+            "timeframe": "1d",
+            "ts": datetime(2026, 5, 29, tzinfo=UTC),
+            "open": Decimal("100.0"),
+            "high": Decimal("102.0"),
+            "low": Decimal("98.0"),
+            "close": Decimal("101.0"),
+            "volume": Decimal("1000"),
+            "open_interest": None,
+            "source": "tvkit",
+            "ingested_at": datetime(2026, 5, 29, tzinfo=UTC),
+        }
+        conn = MagicMock()
+        conn.fetch = AsyncMock(return_value=[record])
+        pool = _mock_pool_with_conn(conn)
+        rows = await fetch_ohlcv(pool, symbol="SET:PTT", timeframe="1d", since=since, limit=50)
+        assert len(rows) == 1
+        assert isinstance(rows[0], OHLCVBarRow)
+        assert rows[0].close == Decimal("101.0")
+        args = conn.fetch.await_args.args
+        assert "AND ts >= $3" in args[0]
+        assert args[3] == since
+        assert args[4] == 50
+
+    async def test_wraps_asyncpg_error(self) -> None:
+        conn = MagicMock()
+        conn.fetch = AsyncMock(side_effect=OSError("boom"))
+        pool = _mock_pool_with_conn(conn)
+        with pytest.raises(RepositoryError, match="fetch_ohlcv failed"):
+            await fetch_ohlcv(pool, symbol="SET:PTT", timeframe="1d")
+
+
+class TestUpsertCorporateActions:
+    async def test_empty_input_short_circuits(self) -> None:
+        pool = MagicMock()
+        assert await upsert_corporate_actions(pool, []) == 0
+
+    async def test_executes_with_conflict_clause(self) -> None:
+        conn = MagicMock()
+        conn.executemany = AsyncMock()
+        pool = _mock_pool_with_conn(conn)
+        rows = [
+            CorporateActionRow(
+                symbol="SET:PTT",
+                ex_date=date(2026, 5, 29),
+                action_type="split",
+                ratio=Decimal("0.5"),
+                amount=Decimal("2"),
+            )
+        ]
+        assert await upsert_corporate_actions(pool, rows) == 1
+        sql_arg = conn.executemany.await_args.args[0]
+        payload_arg = conn.executemany.await_args.args[1]
+        assert "INSERT INTO market_data.corporate_actions" in sql_arg
+        assert "ON CONFLICT (symbol, ex_date, action_type)" in sql_arg
+        assert all(len(tup) == 6 for tup in payload_arg)
+
+    async def test_wraps_asyncpg_error(self) -> None:
+        conn = MagicMock()
+        conn.executemany = AsyncMock(side_effect=OSError("boom"))
+        pool = _mock_pool_with_conn(conn)
+        rows = [CorporateActionRow(symbol="X", ex_date=date(2026, 1, 1), action_type="roll")]
+        with pytest.raises(RepositoryError, match="upsert_corporate_actions failed"):
+            await upsert_corporate_actions(pool, rows)
+
+
+class TestUpsertUniverseMembership:
+    async def test_empty_input_short_circuits(self) -> None:
+        pool = MagicMock()
+        assert await upsert_universe_membership(pool, []) == 0
+
+    async def test_executes_with_conflict_clause(self) -> None:
+        conn = MagicMock()
+        conn.executemany = AsyncMock()
+        pool = _mock_pool_with_conn(conn)
+        rows = [
+            UniverseMembershipRow(as_of=date(2026, 5, 1), symbol="SET:PTT"),
+            UniverseMembershipRow(as_of=date(2026, 5, 1), symbol="SET:CPALL", index_name="SET50"),
+        ]
+        assert await upsert_universe_membership(pool, rows) == 2
+        sql_arg = conn.executemany.await_args.args[0]
+        payload_arg = conn.executemany.await_args.args[1]
+        assert "INSERT INTO market_data.universe_membership" in sql_arg
+        assert "ON CONFLICT (as_of, symbol, index_name)" in sql_arg
+        assert all(len(tup) == 3 for tup in payload_arg)
+
+    async def test_wraps_asyncpg_error(self) -> None:
+        conn = MagicMock()
+        conn.executemany = AsyncMock(side_effect=OSError("boom"))
+        pool = _mock_pool_with_conn(conn)
+        rows = [UniverseMembershipRow(as_of=date(2026, 5, 1), symbol="SET:PTT")]
+        with pytest.raises(RepositoryError, match="upsert_universe_membership failed"):
+            await upsert_universe_membership(pool, rows)

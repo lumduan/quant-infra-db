@@ -47,6 +47,20 @@ class Settings(BaseSettings):
         )
 
     @property
+    def market_data_dsn(self) -> str:
+        """Connection string for the db_market_data database.
+
+        The shared canonical OHLCV store (feature-market-data-engine, Phase 1);
+        the standalone quant-marketdata-engine writes the `market_data.*` tables
+        here in Phase 2.
+        """
+        return (
+            f"postgresql://{self.postgres_user}:"
+            f"{self.postgres_password.get_secret_value()}"
+            f"@{self.postgres_host}:{self.postgres_port}/db_market_data"
+        )
+
+    @property
     def mongo_uri(self) -> str:
         """Connection URI for MongoDB.
 

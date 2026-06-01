@@ -18,8 +18,11 @@ import asyncpg
 from src.db.errors import RepositoryError
 from src.db.models import (
     BenchmarkEquityCurveRow,
+    CorporateActionRow,
+    OHLCVBarRow,
     StrategyReportSnapshotRow,
     TradeHistoryRow,
+    UniverseMembershipRow,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,3 +210,142 @@ async def fetch_strategy_report(
     if isinstance(payload["report"], str):
         payload["report"] = json.loads(payload["report"])
     return StrategyReportSnapshotRow(**payload)
+
+
+# ---------------------------------------------------------------------------
+# Shared market_data store (feature-market-data-engine, Phase 1).
+# These helpers take a pool connected to db_market_data; tables are
+# schema-qualified `market_data.*`. ingested_at is DB-defaulted (NOT in the
+# INSERT column list) so re-running an ingest does not churn the audit column.
+# ---------------------------------------------------------------------------
+
+_OHLCV_UPSERT_SQL = """
+INSERT INTO market_data.ohlcv (
+    symbol, timeframe, ts, open, high, low, close, volume, open_interest, source
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (symbol, timeframe, ts) DO UPDATE SET
+    open          = EXCLUDED.open,
+    high          = EXCLUDED.high,
+    low           = EXCLUDED.low,
+    close         = EXCLUDED.close,
+    volume        = EXCLUDED.volume,
+    open_interest = EXCLUDED.open_interest,
+    source        = EXCLUDED.source,
+    ingested_at   = now()
+"""
+
+_CORPORATE_ACTION_UPSERT_SQL = """
+INSERT INTO market_data.corporate_actions (
+    symbol, ex_date, action_type, ratio, amount, note
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (symbol, ex_date, action_type) DO UPDATE SET
+    ratio       = EXCLUDED.ratio,
+    amount      = EXCLUDED.amount,
+    note        = EXCLUDED.note,
+    ingested_at = now()
+"""
+
+_UNIVERSE_MEMBERSHIP_UPSERT_SQL = """
+INSERT INTO market_data.universe_membership (as_of, symbol, index_name)
+VALUES ($1, $2, $3)
+ON CONFLICT (as_of, symbol, index_name) DO UPDATE SET
+    ingested_at = now()
+"""
+
+
+async def upsert_ohlcv(pool: asyncpg.Pool, rows: Sequence[OHLCVBarRow]) -> int:
+    """Idempotently upsert a batch of raw OHLCV bars. Returns the row count."""
+    if not rows:
+        return 0
+    payload = [
+        (
+            r.symbol,
+            r.timeframe,
+            r.ts,
+            r.open,
+            r.high,
+            r.low,
+            r.close,
+            r.volume,
+            r.open_interest,
+            r.source,
+        )
+        for r in rows
+    ]
+    try:
+        async with pool.acquire() as conn:
+            await conn.executemany(_OHLCV_UPSERT_SQL, payload)
+    except Exception as exc:
+        raise RepositoryError(f"upsert_ohlcv failed: {exc}") from exc
+    logger.info("upserted %d market_data.ohlcv rows", len(payload))
+    return len(payload)
+
+
+async def fetch_ohlcv(
+    pool: asyncpg.Pool,
+    *,
+    symbol: str,
+    timeframe: str,
+    since: datetime | None = None,
+    limit: int = 1000,
+) -> list[OHLCVBarRow]:
+    """Fetch raw bars for (symbol, timeframe), newest first (index-backed)."""
+    columns = (
+        "symbol, timeframe, ts, open, high, low, close, volume, open_interest, source, ingested_at"
+    )
+    try:
+        async with pool.acquire() as conn:
+            if since is None:
+                records = await conn.fetch(
+                    f"SELECT {columns} FROM market_data.ohlcv "
+                    "WHERE symbol = $1 AND timeframe = $2 "
+                    "ORDER BY ts DESC LIMIT $3",
+                    symbol,
+                    timeframe,
+                    limit,
+                )
+            else:
+                records = await conn.fetch(
+                    f"SELECT {columns} FROM market_data.ohlcv "
+                    "WHERE symbol = $1 AND timeframe = $2 AND ts >= $3 "
+                    "ORDER BY ts DESC LIMIT $4",
+                    symbol,
+                    timeframe,
+                    since,
+                    limit,
+                )
+    except Exception as exc:
+        raise RepositoryError(f"fetch_ohlcv failed: {exc}") from exc
+    return [OHLCVBarRow(**dict(r)) for r in records]
+
+
+async def upsert_corporate_actions(pool: asyncpg.Pool, rows: Sequence[CorporateActionRow]) -> int:
+    """Idempotently upsert corporate-action / roll rows. Returns the row count."""
+    if not rows:
+        return 0
+    payload = [(r.symbol, r.ex_date, r.action_type, r.ratio, r.amount, r.note) for r in rows]
+    try:
+        async with pool.acquire() as conn:
+            await conn.executemany(_CORPORATE_ACTION_UPSERT_SQL, payload)
+    except Exception as exc:
+        raise RepositoryError(f"upsert_corporate_actions failed: {exc}") from exc
+    logger.info("upserted %d market_data.corporate_actions rows", len(payload))
+    return len(payload)
+
+
+async def upsert_universe_membership(
+    pool: asyncpg.Pool, rows: Sequence[UniverseMembershipRow]
+) -> int:
+    """Idempotently upsert universe-membership rows. Returns the row count."""
+    if not rows:
+        return 0
+    payload = [(r.as_of, r.symbol, r.index_name) for r in rows]
+    try:
+        async with pool.acquire() as conn:
+            await conn.executemany(_UNIVERSE_MEMBERSHIP_UPSERT_SQL, payload)
+    except Exception as exc:
+        raise RepositoryError(f"upsert_universe_membership failed: {exc}") from exc
+    logger.info("upserted %d market_data.universe_membership rows", len(payload))
+    return len(payload)
