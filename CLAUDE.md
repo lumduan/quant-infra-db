@@ -58,11 +58,21 @@ uv run pip-audit
 ```
 docker compose up -d
   └── quant-postgres  (timescale/timescaledb:latest-pg16)
-  │     ├── db_csm_set   — equity_curve, trade_history, backtest_log
-  │     └── db_gateway   — daily_performance, portfolio_snapshot
+  │     ├── db_csm_set       — equity_curve, trade_history, backtest_log
+  │     ├── db_gateway       — daily_performance, portfolio_snapshot
+  │     └── db_market_data   — market_data.{ohlcv, corporate_actions,
+  │                            universe_membership, ohlcv_adjusted view} + CAGGs
   └── quant-mongo    (mongo:latest)
         └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
+
+`db_market_data` is the shared canonical OHLCV store for the Market Data engine
+(`feature-market-data-engine`, Phase 1). It is a **dedicated database** (not a `db_gateway`
+schema) so the store is independently owned (ADR D4/D7). The `market_data.ohlcv` hypertable
+keys on `(symbol, timeframe, ts)` (Option A multi-timeframe); prices are `numeric(18,6)`,
+volume/open_interest `numeric(20,4)`; raw bars are stored and adjusted on read via the
+`ohlcv_adjusted` view. The standalone `quant-marketdata-engine` becomes the sole writer in
+Phase 2; init scripts `10_schema_market_data.sql` + `11_market_data_caggs.sql`.
 
 All containers join the external network `quant-network` (created once per host).
 Downstream services reach databases by hostname (`quant-postgres`, `quant-mongo`),

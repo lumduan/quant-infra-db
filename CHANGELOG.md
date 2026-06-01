@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (feature-market-data-engine — Phase 1: shared `market_data` schema)
+
+- New database **`db_market_data`** with a **`market_data`** schema — the shared canonical
+  OHLCV store (a dedicated DB, not a `db_gateway` schema, per ADR D4/D7). Created via the
+  `\gexec` guard in `01_create_databases.sql`; TimescaleDB enabled in `02_enable_timescaledb.sql`.
+- `init-scripts/10_schema_market_data.sql`:
+  - `market_data.ohlcv` hypertable, **PK `(symbol, timeframe, ts)`** (Option A multi-timeframe,
+    D10). Prices `numeric(18,6)`, `volume`/`open_interest` `numeric(20,4)`; `open_interest`
+    carried from day one (NULL for equities). `ts` is bar-open UTC. 30-day chunks; compression
+    `segmentby (symbol, timeframe)` after 7 days; read-path index `(symbol, timeframe, ts DESC)`.
+    CHECK constraints: timeframe ∈ {1d,1h,5m}, prices > 0, volume ≥ 0, open_interest ≥ 0,
+    high ≥ low. **Deliberately uses `numeric(18,6)` vs the 08/09 mirror's `(18,4)`** (shared
+    multi-asset store; ADR §5 serialises 6-dp prices; 08/09 is being retired).
+  - `market_data.corporate_actions` — splits/dividends + futures roll dates; PK
+    `(symbol, ex_date, action_type)`. `ratio` = price back-adjustment multiplier.
+  - `market_data.universe_membership` — as-of dated point-in-time constituents; PK
+    `(as_of, symbol, index_name)`.
+  - `market_data.ohlcv_adjusted` — adjust-on-read **view** (D2): back-adjusts prior bars by the
+    cumulative product of `ratio` over later-dated actions; recomputes on every read.
+- `init-scripts/11_market_data_caggs.sql` — `cagg_ohlcv_1h` / `cagg_ohlcv_4h` continuous
+  aggregates derived from the 5m base (`WITH NO DATA` + refresh policies, 06-style). Fetched
+  `1d` stays authoritative (settlement, never rolled up).
+- `src/db/models.py`: `OHLCVBarRow`, `CorporateActionRow`, `UniverseMembershipRow` (Pydantic v2,
+  `Decimal` prices, UTC validators, timeframe/action-type enums, high ≥ low check).
+- `src/db/repositories.py`: `upsert_ohlcv`, `fetch_ohlcv`, `upsert_corporate_actions`,
+  `upsert_universe_membership` (asyncpg `INSERT … ON CONFLICT … DO UPDATE`).
+- `src/config.py`: `market_data_dsn` property (`db_market_data`).
+- Tests: unit (`test_models.py`, `test_repositories.py`) + live-DB infra (`test_postgres.py`,
+  `-m infra`) proving hypertable creation, upsert idempotency, constraint rejection, adjusted-view
+  recompute on a new action, CAGG registration, and index-backed reads.
+
 ### Added (Phase 1)
 
 - **Project Bootstrap:** Docker Compose stack (PostgreSQL + TimescaleDB + MongoDB) on `quant-network`.
