@@ -54,9 +54,11 @@
 --     it SELECT/INSERT/UPDATE on orders and SELECT/INSERT on fills /
 --     order_events — nothing else; strategies and the gateway get no write
 --     grant on ``execution.*``. The triggers remain the backstop either way.
---   * Deliberately omitted (not in the frozen Phase 1 column list):
---     ``reject_reason`` / ``metadata`` columns — Phase 2 can ALTER TABLE or
---     source them from ``order_events.event``.
+--   * ``reject_reason`` (nullable TEXT) was added in Phase 2 — the
+--     Phase-1-sanctioned ALTER: the engine persists the adapter/venue reject
+--     reason durably on the REJECTED row (real-money audit must not live in a
+--     cache). ``metadata`` stays deliberately omitted (opaque strategy tags,
+--     never venue-sent; the engine consumes it in-flight only).
 --   * Fully idempotent: re-running this script (or container init) is a
 --     no-op (IF NOT EXISTS / CREATE OR REPLACE; PG14+ has
 --     CREATE OR REPLACE TRIGGER and the stack runs latest-pg16).
@@ -104,6 +106,7 @@ CREATE TABLE IF NOT EXISTS execution.orders (
         CHECK (status IN ('PENDING_NEW', 'NEW', 'PARTIALLY_FILLED', 'FILLED',
                           'PENDING_CANCEL', 'PENDING_REPLACE',
                           'CANCELLED', 'REJECTED', 'EXPIRED')),
+    reject_reason   TEXT,
     created_at      TIMESTAMPTZ    NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ    NOT NULL DEFAULT now(),
     CONSTRAINT pk_orders PRIMARY KEY (client_order_id),
@@ -120,6 +123,10 @@ CREATE TABLE IF NOT EXISTS execution.orders (
     CONSTRAINT ck_orders_position_effect_tfex_only
         CHECK (position_effect IS NULL OR market = 'TFEX')
 );
+
+-- Phase 2 addition (idempotent on databases created before it existed):
+-- CREATE TABLE IF NOT EXISTS above does not add columns to a live table.
+ALTER TABLE execution.orders ADD COLUMN IF NOT EXISTS reject_reason TEXT;
 
 -- Venue -> local lookup once an ack has assigned a broker_order_id. Partial:
 -- PENDING_NEW rows have no venue id; the lookup always carries a concrete id.
