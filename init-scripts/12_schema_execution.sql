@@ -301,3 +301,33 @@ CREATE OR REPLACE TRIGGER trg_order_events_no_update_delete
 CREATE OR REPLACE TRIGGER trg_order_events_no_truncate
     BEFORE TRUNCATE ON execution.order_events
     FOR EACH STATEMENT EXECUTE FUNCTION execution.order_events_block_mutation();
+
+-- ---------------------------------------------------------------------------
+-- Service-role grants (Phase 2 — the least-privilege block the Phase-1 header
+-- promised). ``quant`` is the shared service role this stack's engines connect
+-- as (the marketdata-engine precedent); created here if absent with the same
+-- placeholder password the compose files ship — operators MUST override it
+-- per machine (ALTER ROLE quant PASSWORD ...) outside the repo.
+--
+--   * orders:        SELECT, INSERT, UPDATE  (the lifecycle writer)
+--   * fills:         SELECT, INSERT          (append-only by privilege)
+--   * order_events:  SELECT, INSERT — INSERT is REQUIRED because the audit
+--     trigger runs with INVOKER rights: the engine's INSERT/UPDATE on orders
+--     fires orders_append_event, which inserts the audit row AS the engine
+--     role. Append-only still holds: no UPDATE/DELETE granted, and the
+--     block-mutation triggers reject them for every role anyway.
+--   * sequences:     USAGE for the identity columns (fill_id / event_id).
+--   * No DELETE anywhere; strategies and the gateway get NO grant at all.
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'quant') THEN
+        CREATE ROLE quant LOGIN PASSWORD 'quant';
+    END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA execution TO quant;
+GRANT SELECT, INSERT, UPDATE ON execution.orders TO quant;
+GRANT SELECT, INSERT ON execution.fills TO quant;
+GRANT SELECT, INSERT ON execution.order_events TO quant;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA execution TO quant;
