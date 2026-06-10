@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (feature-execution-engine — Phase 2: service-role grants)
+
+- `init-scripts/12_schema_execution.sql`: idempotent **least-privilege grants for the
+  `quant` service role** (created if absent; placeholder password matches the compose
+  files — operators override per machine). orders: SELECT/INSERT/UPDATE; fills +
+  order_events: SELECT/INSERT (the audit trigger runs with INVOKER rights, so the
+  engine role needs INSERT on order_events; append-only still trigger-enforced);
+  USAGE on the identity sequences. **No DELETE anywhere; strategies/gateway get no
+  grant.** This is the grant block the Phase 1 header deferred to Phase 2.
+
 ### Added (feature-execution-engine — Phase 2 prep: engine registry + reject_reason)
 
 - `init-scripts/07_engine_catalog.sql`: register the **`execution`** engine
