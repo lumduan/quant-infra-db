@@ -136,6 +136,8 @@ async def test_orders_columns_types_and_checks(settings: Settings) -> None:
             assert cols[qty_col]["data_type"] == "bigint"
         for ts_col in ("created_at", "updated_at"):
             assert cols[ts_col]["data_type"] == "timestamp with time zone"
+        # Phase 2 addition: durable adapter/venue reject reason (nullable).
+        assert cols["reject_reason"]["data_type"] == "text"
 
         # CHECK constraints carry the full frozen enum sets.
         constraints = await conn.fetch(

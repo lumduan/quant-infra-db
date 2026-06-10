@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (feature-execution-engine — Phase 2 prep: engine registry + reject_reason)
+
+- `init-scripts/07_engine_catalog.sql`: register the **`execution`** engine
+  (`EXTERNAL`, `active`) in `engine_registry` — the gateway's `/api/v2/engines/catalog`
+  is DB-first, so the standalone `quant-execution-engine` (host `:8400`) must exist here,
+  not just in the gateway's static fallback. Idempotent (`ON CONFLICT (slug) DO NOTHING`).
+- `init-scripts/12_schema_execution.sql`: add **`execution.orders.reject_reason`**
+  (nullable TEXT) — the Phase-1-sanctioned Phase-2 `ALTER`; the engine persists the
+  adapter/venue reject reason durably on REJECTED rows. Both in `CREATE TABLE` (fresh
+  volumes) and as `ALTER TABLE … ADD COLUMN IF NOT EXISTS` (live databases).
+- `tests/test_execution_schema.py`: assert the new column.
+
 ### Added (feature-execution-engine — Phase 1: `execution` order store)
 
 - New database **`db_execution`** with an **`execution`** schema — the durable, idempotent,
