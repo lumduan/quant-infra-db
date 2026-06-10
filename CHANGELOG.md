@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (feature-execution-engine — Phase 1: `execution` order store)
+
+- New database **`db_execution`** with an **`execution`** schema — the durable, idempotent,
+  auditable order store for the Execution engine (a dedicated DB, mirroring `db_market_data`,
+  so the store is independently owned; the standalone `quant-execution-engine` becomes the
+  sole writer in Phase 2). Created via the `\gexec` guard in `01_create_databases.sql`.
+  **Plain tables, no TimescaleDB** — low-volume real-money command plane; `fills`/`order_events`
+  FK to `orders` and hypertables cannot be FK targets.
+- `init-scripts/12_schema_execution.sql`:
+  - `execution.orders` — **PK `client_order_id` (TEXT, opaque per ADR §A)** = the idempotency
+    constraint; the frozen NormalizedOrder enums as CHECK constraints (broker ∈
+    {sim,liberator,settrade}, market ∈ {SET,TFEX}, side, 8 order types, tif,
+    position_effect, the 9-state status); prices `numeric(18,6)`, quantities `bigint`;
+    cross-field CHECKs (LIMIT/STOP_LIMIT price required, STOP/STOP_LIMIT stop_price required,
+    `display_qty ≤ quantity`, position_effect TFEX-only); partial index
+    `(broker, broker_order_id)` for venue→local lookup and the ADR §B reconciliation index
+    `(account, symbol, side, quantity, created_at)` (±5 s lost-ack fuzzy match).
+  - `execution.fills` — identity PK, FK → orders; `UNIQUE (client_order_id, broker_fill_id)`
+    dedupes at-least-once fill delivery (NULL fill ids exempt — adapters must supply one).
+  - `execution.order_events` — **append-only** audit log (UPDATE/DELETE/TRUNCATE raise);
+    FK → orders, so audited orders can never be deleted.
+  - Triggers: `orders_guard` (entry state = PENDING_NEW; **exactly the 13 frozen
+    state-machine edges**, ERRCODE 23514; terminal states immutable; auto `updated_at`) and
+    `orders_append_event` (one audit row per INSERT/transition, `broker_order_id`
+    snapshotted atomically on ack per ADR §B — DB-enforced, no app code). Frozen-graph gaps
+    (cancel-reject, Liberator `PENDING_REPLACE → CANCELLED`) deliberately not encoded —
+    amending the graph needs an ADR amendment + follow-up migration.
+- `src/config.py`: `execution_dsn` property (`db_execution`).
+- Tests: `tests/test_execution_schema.py` (`-m infra`) proving double-apply idempotency
+  (psql via docker exec, `ON_ERROR_STOP=1`), duplicate `client_order_id` rejection,
+  entry-state enforcement, legal-lifecycle audit rows (one per transition), illegal-transition
+  rejection, terminal immutability, fill FK/dedupe, append-only enforcement, and Decimal
+  `numeric(18,6)` round-trip; `test_config.py::test_execution_dsn_format` (unit).
+
 ### Added (feature-market-data-engine — Phase 1: shared `market_data` schema)
 
 - New database **`db_market_data`** with a **`market_data`** schema — the shared canonical

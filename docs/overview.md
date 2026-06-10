@@ -10,8 +10,12 @@ and the API Gateway.
 ```text
 docker compose up -d
   └── quant-postgres  (timescale/timescaledb:latest-pg16)
-  │     ├── db_csm_set   — equity_curve, trade_history, backtest_log
-  │     └── db_gateway   — daily_performance, portfolio_snapshot
+  │     ├── db_csm_set     — equity_curve, trade_history, backtest_log
+  │     ├── db_gateway     — daily_performance, portfolio_snapshot
+  │     ├── db_market_data — market_data.{ohlcv, corporate_actions,
+  │     │                    universe_membership, ohlcv_adjusted view} + CAGGs
+  │     └── db_execution   — execution.{orders, fills, order_events}
+  │                          + frozen-state-machine triggers
   └── quant-mongo    (mongo:latest)
         └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
@@ -33,6 +37,8 @@ development access only.
 | --- | --- | --- |
 | Time-series / equity data | PostgreSQL + TimescaleDB | Hypertables for `equity_curve`, `daily_performance`, `portfolio_snapshot`. Auto-partitioning by time, fast range queries. |
 | Trade history | PostgreSQL | Relational table with indexes on `(strategy_id, time DESC)`. |
+| Canonical OHLCV | PostgreSQL + TimescaleDB | `db_market_data`: `market_data.ohlcv` hypertable + corporate actions + adjust-on-read view (feature-market-data-engine Phase 1). |
+| Order lifecycle | PostgreSQL (plain tables) | `db_execution`: `execution.orders` / `fills` / append-only `order_events`; trigger-enforced frozen state machine (feature-execution-engine Phase 1). |
 | Backtest params, logs, signals | MongoDB | Schema-less documents. Flexible JSON/BSON for varying backtest configs and signal shapes. |
 
 ## Data flow
