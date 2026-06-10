@@ -60,8 +60,10 @@ docker compose up -d
   └── quant-postgres  (timescale/timescaledb:latest-pg16)
   │     ├── db_csm_set       — equity_curve, trade_history, backtest_log
   │     ├── db_gateway       — daily_performance, portfolio_snapshot
-  │     └── db_market_data   — market_data.{ohlcv, corporate_actions,
-  │                            universe_membership, ohlcv_adjusted view} + CAGGs
+  │     ├── db_market_data   — market_data.{ohlcv, corporate_actions,
+  │     │                      universe_membership, ohlcv_adjusted view} + CAGGs
+  │     └── db_execution     — execution.{orders, fills, order_events}
+  │                            + frozen-state-machine triggers
   └── quant-mongo    (mongo:latest)
         └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
@@ -73,6 +75,16 @@ keys on `(symbol, timeframe, ts)` (Option A multi-timeframe); prices are `numeri
 volume/open_interest `numeric(20,4)`; raw bars are stored and adjusted on read via the
 `ohlcv_adjusted` view. The standalone `quant-marketdata-engine` becomes the sole writer in
 Phase 2; init scripts `10_schema_market_data.sql` + `11_market_data_caggs.sql`.
+
+`db_execution` is the durable order store for the Execution engine
+(`feature-execution-engine`, Phase 1). **Plain tables, not hypertables** (low-volume
+real-money command plane; FK targets cannot be hypertables): `execution.orders` (PK =
+idempotency key `client_order_id`), `execution.fills` (fill dedupe on
+`(client_order_id, broker_fill_id)`), and append-only `execution.order_events`. DB triggers
+enforce exactly the frozen 9-state order machine (13 legal edges, terminal states
+immutable) and auto-append one audit row per transition. The standalone
+`quant-execution-engine` becomes the sole writer in Phase 2; init script
+`12_schema_execution.sql`.
 
 All containers join the external network `quant-network` (created once per host).
 Downstream services reach databases by hostname (`quant-postgres`, `quant-mongo`),

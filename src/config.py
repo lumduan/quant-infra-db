@@ -61,6 +61,20 @@ class Settings(BaseSettings):
         )
 
     @property
+    def execution_dsn(self) -> str:
+        """Connection string for the db_execution database.
+
+        The durable order store (feature-execution-engine, Phase 1);
+        the standalone quant-execution-engine writes the `execution.*` tables
+        here in Phase 2.
+        """
+        return (
+            f"postgresql://{self.postgres_user}:"
+            f"{self.postgres_password.get_secret_value()}"
+            f"@{self.postgres_host}:{self.postgres_port}/db_execution"
+        )
+
+    @property
     def mongo_uri(self) -> str:
         """Connection URI for MongoDB.
 

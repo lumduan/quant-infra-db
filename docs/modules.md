@@ -38,6 +38,14 @@ def gateway_dsn(self) -> str:
     """Connection string for the db_gateway database."""
 
 @property
+def market_data_dsn(self) -> str:
+    """Connection string for the db_market_data database."""
+
+@property
+def execution_dsn(self) -> str:
+    """Connection string for the db_execution database."""
+
+@property
 def mongo_uri(self) -> str:
     """MongoDB URI. Includes auth credentials only when both
     mongo_username and mongo_password are non-empty."""
@@ -202,12 +210,13 @@ All scripts are idempotent.
 
 | Script | Database | Purpose |
 |---|---|---|
-| `01_create_databases.sql` | postgres (admin) | Creates `db_csm_set` and `db_gateway` using `\gexec` for idempotency |
+| `01_create_databases.sql` | postgres (admin) | Creates `db_csm_set`, `db_gateway`, `db_market_data` and `db_execution` using `\gexec` for idempotency |
 | `02_enable_timescaledb.sql` | db_csm_set, db_gateway | Enables TimescaleDB extension on both databases |
 | `03_schema_csm_set.sql` | db_csm_set | Creates `equity_curve` (hypertable), `trade_history`, `backtest_log` |
 | `04_schema_gateway.sql` | db_gateway | Creates `daily_performance` (hypertable), `portfolio_snapshot` (hypertable) |
 | `05_schema_strategy_report.sql` | db_csm_set, db_gateway | Phase 2: extends `trade_history` (now a hypertable with 4 P&L columns + relaxed `side` CHECK); creates `benchmark_equity_curve` (hypertable, db_csm_set) and `strategy_report_snapshot` (hypertable, db_gateway) |
 | `06_continuous_aggregates.sql` | db_csm_set, db_gateway | Phase 2: continuous aggregates `cagg_trade_history_monthly` (db_csm_set) and `cagg_daily_performance_monthly` (db_gateway) + refresh policies (every 1h, 2h lag) |
+| `12_schema_execution.sql` | postgres (admin), then `\connect db_execution` | feature-execution-engine Phase 1: `execution` schema — `orders` (idempotency PK `client_order_id`, frozen-contract CHECKs), `fills` (dedupe UNIQUE), append-only `order_events` + transition-guard / audit-append / append-only triggers (plain tables, no TimescaleDB) |
 | `mongo-init.js` | csm_logs | Creates collections `backtest_results`, `model_params`, `signal_snapshots` with indexes |
 
 ### Schema reference — `db_csm_set`

@@ -10,3 +10,10 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_gateway')\gexec
 -- db_gateway) keeps the canonical store independently owned per ADR D4/D7.
 SELECT 'CREATE DATABASE db_market_data'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_market_data')\gexec
+-- db_execution: durable order store for the Execution engine
+-- (feature-execution-engine Phase 1). A dedicated database (not a schema in
+-- db_gateway) keeps the order store independently owned, mirroring
+-- db_market_data; the standalone quant-execution-engine becomes the sole
+-- writer in Phase 2.
+SELECT 'CREATE DATABASE db_execution'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_execution')\gexec
