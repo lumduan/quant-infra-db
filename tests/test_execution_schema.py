@@ -54,7 +54,11 @@ def test_schema_reapply_idempotent() -> None:
     ON_ERROR_STOP=1 is mandatory — without it psql exits 0 even on errors.
     """
     for _ in range(2):
-        for script in ("01_create_databases.sql", "12_schema_execution.sql"):
+        for script in (
+            "01_create_databases.sql",
+            "12_schema_execution.sql",
+            "13_execution_strategy_id.sql",
+        ):
             result = subprocess.run(
                 [
                     "docker",
@@ -168,6 +172,61 @@ async def test_orders_indexes_exist(settings: Settings) -> None:
         assert "(account, symbol, side, quantity, created_at)" in defs["idx_orders_reconcile"]
         assert "WHERE (broker_order_id IS NOT NULL)" in defs["idx_orders_broker_order_id"]
         assert "(client_order_id, event_id)" in defs["idx_order_events_order"]
+    finally:
+        await conn.close()
+
+
+async def test_orders_strategy_id_column_and_index(settings: Settings) -> None:
+    """Phase 5 addition: nullable text strategy_id + the partial stream-filter index.
+
+    Strictly additive — rows insert fine without it (NULL), persist it when
+    given, and the partial index excludes strategy-less rows.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.execution_dsn)
+    try:
+        col = await conn.fetchrow(
+            "SELECT data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_schema = 'execution' AND table_name = 'orders' "
+            "AND column_name = 'strategy_id'"
+        )
+        assert col is not None, "strategy_id column missing — apply 13_execution_strategy_id.sql"
+        assert col["data_type"] == "text"
+        assert col["is_nullable"] == "YES"
+
+        idx = await conn.fetchval(
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE schemaname = 'execution' AND indexname = 'idx_orders_strategy'"
+        )
+        assert idx is not None
+        assert "(strategy_id, created_at)" in idx
+        assert "WHERE (strategy_id IS NOT NULL)" in idx
+
+        tr = conn.transaction()
+        await tr.start()
+        try:
+            await conn.execute(INSERT_ORDER, "T-EXEC-STRATEGY-00")  # no strategy_id -> NULL
+            await conn.execute(
+                "INSERT INTO execution.orders (client_order_id, broker, account, symbol, "
+                "market, side, order_type, price, quantity, tif, strategy_id) "
+                "VALUES ($1, 'sim', 'ACC-TEST', 'PTT', 'SET', 'BUY', 'LIMIT', 1.23, 100, "
+                "'DAY', $2)",
+                "T-EXEC-STRATEGY-01",
+                "csm-set",
+            )
+            stamped = await conn.fetchval(
+                "SELECT strategy_id FROM execution.orders WHERE client_order_id = $1",
+                "T-EXEC-STRATEGY-01",
+            )
+            assert stamped == "csm-set"
+            bare = await conn.fetchval(
+                "SELECT strategy_id FROM execution.orders WHERE client_order_id = $1",
+                "T-EXEC-STRATEGY-00",
+            )
+            assert bare is None
+        finally:
+            await tr.rollback()
     finally:
         await conn.close()
 
