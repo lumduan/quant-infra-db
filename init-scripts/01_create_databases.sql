@@ -17,3 +17,12 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_market_data')\gexe
 -- writer in Phase 2.
 SELECT 'CREATE DATABASE db_execution'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_execution')\gexec
+-- db_orderbook: durable hot-tier order-book capture store for the Order-Book
+-- Capture engine (feature-orderbook-engine Phase 1). A dedicated database (not
+-- a schema in db_gateway) keeps the capture store independently owned,
+-- mirroring db_market_data / db_execution; the standalone
+-- quant-orderbook-engine (market-data plane, host :8600) becomes the sole
+-- writer. The append-only binary raw log + Parquet cold tier are the systems
+-- of record; this DB is the regenerable queryable mirror.
+SELECT 'CREATE DATABASE db_orderbook'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_orderbook')\gexec

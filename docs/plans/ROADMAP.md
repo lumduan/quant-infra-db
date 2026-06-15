@@ -449,6 +449,13 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 - **Blocked by:** nothing
 - **Next:** Phase 6 — Downstream service integration: wire the CSM-SET strategy adapter to `db_csm_set` and `csm_logs`; provision the API Gateway service against `db_gateway`.
 
+> **Per-engine schema additions** (tracked in the umbrella feature roadmaps, not the phases above):
+> `db_market_data` (`feature-market-data-engine`), `db_execution` (`feature-execution-engine`), and
+> `db_orderbook` (`feature-orderbook-engine`, Phase 1) — the order-book capture hot tier:
+> `orderbook.{raw_events, trades, book_snapshots, settlements, gap_windows, dq_manifests}`
+> (TimescaleDB hypertables for the event streams + plain reference tables;
+> `init-scripts/14_schema_orderbook.sql`).
+
 ---
 
 ## Related notes
