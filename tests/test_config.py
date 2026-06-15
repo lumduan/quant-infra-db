@@ -51,6 +51,13 @@ class TestSettings:
             dsn = settings.execution_dsn
             assert dsn == "postgresql://postgres:mypass@localhost:5432/db_execution"
 
+    def test_orderbook_dsn_format(self) -> None:
+        """DSN string is correctly formatted for db_orderbook."""
+        with patch.dict("os.environ", {"POSTGRES_PASSWORD": "mypass"}, clear=True):
+            settings = Settings()
+            dsn = settings.orderbook_dsn
+            assert dsn == "postgresql://postgres:mypass@localhost:5432/db_orderbook"
+
     def test_mongo_uri_format(self) -> None:
         """MongoDB URI is correctly formatted without auth credentials."""
         with patch.dict("os.environ", {"POSTGRES_PASSWORD": "test"}, clear=True):

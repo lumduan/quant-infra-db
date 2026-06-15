@@ -75,6 +75,20 @@ class Settings(BaseSettings):
         )
 
     @property
+    def orderbook_dsn(self) -> str:
+        """Connection string for the db_orderbook database.
+
+        The durable hot-tier order-book capture store
+        (feature-orderbook-engine, Phase 1); the standalone
+        quant-orderbook-engine writes the `orderbook.*` tables here.
+        """
+        return (
+            f"postgresql://{self.postgres_user}:"
+            f"{self.postgres_password.get_secret_value()}"
+            f"@{self.postgres_host}:{self.postgres_port}/db_orderbook"
+        )
+
+    @property
     def mongo_uri(self) -> str:
         """Connection URI for MongoDB.
 

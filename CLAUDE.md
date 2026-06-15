@@ -62,8 +62,10 @@ docker compose up -d
   │     ├── db_gateway       — daily_performance, portfolio_snapshot
   │     ├── db_market_data   — market_data.{ohlcv, corporate_actions,
   │     │                      universe_membership, ohlcv_adjusted view} + CAGGs
-  │     └── db_execution     — execution.{orders, fills, order_events}
-  │                            + frozen-state-machine triggers
+  │     ├── db_execution     — execution.{orders, fills, order_events}
+  │     │                      + frozen-state-machine triggers
+  │     └── db_orderbook     — orderbook.{raw_events, trades, book_snapshots,
+  │                            settlements, gap_windows, dq_manifests}
   └── quant-mongo    (mongo:latest)
         └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
@@ -85,6 +87,18 @@ enforce exactly the frozen 9-state order machine (13 legal edges, terminal state
 immutable) and auto-append one audit row per transition. The standalone
 `quant-execution-engine` becomes the sole writer in Phase 2; init script
 `12_schema_execution.sql`.
+
+`db_orderbook` is the durable hot-tier store for the Order-Book Capture engine
+(`feature-orderbook-engine`, Phase 1; market-data plane, host `:8600`). It is a **dedicated
+database** (mirroring `db_market_data` / `db_execution`) holding the `orderbook` schema:
+**TimescaleDB hypertables** for the high-volume event streams (`orderbook.raw_events`
+append-only, `orderbook.trades`, derived `orderbook.book_snapshots`) plus **plain** reference
+tables (`orderbook.settlements`, `orderbook.gap_windows`, `orderbook.dq_manifests`). Prices are
+`numeric(18,6)`, volume `bigint`, capture clocks `bigint` nanoseconds. The append-only binary
+raw log (NVMe) + Parquet cold tier are the systems of record; this DB is the regenerable
+queryable mirror. Compression + a **provisional** (Stage-B-calibration-deferred) retention
+policy sit on the hypertables. The standalone `quant-orderbook-engine` becomes the sole writer;
+init script `14_schema_orderbook.sql`.
 
 All containers join the external network `quant-network` (created once per host).
 Downstream services reach databases by hostname (`quant-postgres`, `quant-mongo`),
