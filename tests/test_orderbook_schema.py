@@ -1,10 +1,13 @@
-"""Live-DB tests for the order-book capture store (14_schema_orderbook.sql).
+"""Live-DB tests for the order-book capture store (14_schema_orderbook.sql +
+15_orderbook_greeks.sql).
 
 Phase 1 of feature-orderbook-engine: the durable hot-tier mirror for the
 Order-Book Capture engine. Covers idempotent re-apply, the orderbook schema +
 its tables, hypertable membership for the three event streams, plain-table
 status for the reference tables, numeric/timestamp precision, the read indexes,
 idempotent settlement / manifest upserts, and the least-privilege grants.
+Also covers ``orderbook.greeks`` (15_orderbook_greeks.sql): columns, PK,
+nullable IV/greeks, index, and quant grants.
 
 Run with a live stack: uv run pytest -m infra
 """
@@ -42,7 +45,7 @@ def settings() -> Settings:
 
 
 def test_schema_reapply_idempotent() -> None:
-    """01 + 02 + 14 apply cleanly against the live container — twice (second run is a no-op).
+    """01 + 02 + 14 + 15 apply cleanly against the live container — twice (second run is a no-op).
 
     Runs first in this module: it also bootstraps db_orderbook on a stack whose
     volume predates the script (init-scripts only auto-run on a fresh volume).
@@ -53,6 +56,7 @@ def test_schema_reapply_idempotent() -> None:
             "01_create_databases.sql",
             "02_enable_timescaledb.sql",
             "14_schema_orderbook.sql",
+            "15_orderbook_greeks.sql",
         ):
             result = subprocess.run(
                 [
@@ -91,7 +95,7 @@ async def test_orderbook_db_reachable(settings: Settings) -> None:
 
 
 async def test_orderbook_tables_exist(settings: Settings) -> None:
-    """All six orderbook tables exist."""
+    """All seven orderbook tables exist (including greeks)."""
     import asyncpg
 
     conn = await asyncpg.connect(settings.orderbook_dsn)
@@ -101,6 +105,7 @@ async def test_orderbook_tables_exist(settings: Settings) -> None:
         )
         tables = {r["table_name"] for r in rows}
         assert set(ALL_TABLES) <= tables
+        assert "greeks" in tables
     finally:
         await conn.close()
 
@@ -119,6 +124,8 @@ async def test_event_streams_are_hypertables(settings: Settings) -> None:
         assert set(HYPERTABLES) <= hypertables
         for plain in PLAIN_TABLES:
             assert plain not in hypertables
+        # greeks is a low-cardinality derived table — plain, not a hypertable.
+        assert "greeks" not in hypertables
     finally:
         await conn.close()
 
@@ -325,5 +332,170 @@ async def test_quant_role_has_least_privilege_grants(settings: Settings) -> None
             assert not await conn.fetchval(
                 f"SELECT has_table_privilege('quant', 'orderbook.{tbl}', 'DELETE')"
             )
+    finally:
+        await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# orderbook.greeks tests (15_orderbook_greeks.sql)
+# ---------------------------------------------------------------------------
+
+
+async def test_greeks_table_exists(settings: Settings) -> None:
+    """orderbook.greeks exists as a plain (non-hypertable) table."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.orderbook_dsn)
+    try:
+        table = await conn.fetchval(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'orderbook' AND table_name = 'greeks'"
+        )
+        assert table == "greeks"
+    finally:
+        await conn.close()
+
+
+async def test_greeks_columns(settings: Settings) -> None:
+    """orderbook.greeks has the expected columns, types, and nullable/not-null constraints."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.orderbook_dsn)
+    try:
+        rows = await conn.fetch(
+            "SELECT column_name, data_type, is_nullable "
+            "FROM information_schema.columns "
+            "WHERE table_schema = 'orderbook' AND table_name = 'greeks'"
+        )
+        cols = {r["column_name"]: r for r in rows}
+
+        # NOT NULL columns.
+        for col in (
+            "date",
+            "symbol",
+            "series",
+            "is_call",
+            "strike",
+            "underlying_symbol",
+            "forward",
+            "option_price",
+            "source",
+        ):
+            assert cols[col]["is_nullable"] == "NO", f"{col} should be NOT NULL"
+
+        # Nullable Greeks / solver outputs.
+        for col in ("time_to_expiry", "iv", "delta", "gamma", "vega", "theta", "rate"):
+            assert cols[col]["is_nullable"] == "YES", f"{col} should be nullable"
+
+        # Type checks on key columns.
+        assert cols["date"]["data_type"] == "date"
+        assert cols["symbol"]["data_type"] == "text"
+        assert cols["is_call"]["data_type"] == "boolean"
+        assert cols["strike"]["data_type"] == "numeric"
+        assert cols["forward"]["data_type"] == "numeric"
+        assert cols["option_price"]["data_type"] == "numeric"
+        assert cols["iv"]["data_type"] == "numeric"
+        assert cols["source"]["data_type"] == "text"
+    finally:
+        await conn.close()
+
+
+async def test_greeks_primary_key(settings: Settings) -> None:
+    """pk_greeks is on (date, symbol); re-insert with same key upserts idempotently."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.orderbook_dsn)
+    tr = conn.transaction()
+    await tr.start()
+    try:
+        insert = (
+            "INSERT INTO orderbook.greeks "
+            "(date, symbol, series, is_call, strike, underlying_symbol, "
+            " forward, option_price, source) "
+            "VALUES ($1, $2, 'M26', TRUE, 1000.0, 'S50M26', 920.0, 10.5, 'black76') "
+            "ON CONFLICT (date, symbol) DO UPDATE "
+            "SET option_price = EXCLUDED.option_price"
+        )
+        d = date(2026, 6, 16)
+        await conn.execute(insert, d, "S50M26C1000")
+        # Re-insert same (date, symbol) with different option_price — must upsert, not duplicate.
+        await conn.execute(insert, d, "S50M26C1000")
+        count = await conn.fetchval(
+            "SELECT count(*) FROM orderbook.greeks WHERE date = $1 AND symbol = $2",
+            d,
+            "S50M26C1000",
+        )
+        assert count == 1
+    finally:
+        await tr.rollback()
+        await conn.close()
+
+
+async def test_greeks_nullable_iv_roundtrip(settings: Settings) -> None:
+    """iv and all Greeks columns accept NULL (below-intrinsic / unsolvable case)."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.orderbook_dsn)
+    tr = conn.transaction()
+    await tr.start()
+    try:
+        await conn.execute(
+            "INSERT INTO orderbook.greeks "
+            "(date, symbol, series, is_call, strike, underlying_symbol, "
+            " forward, option_price, time_to_expiry, iv, delta, gamma, vega, theta, rate, source) "
+            "VALUES ($1, $2, 'M26', FALSE, 1100.0, 'S50M26', 920.0, 0.5, "
+            "        0.04, NULL, NULL, NULL, NULL, NULL, 0.02, 'black76')",
+            date(2026, 6, 16),
+            "S50M26P1100",
+        )
+        row = await conn.fetchrow(
+            "SELECT iv, delta, gamma, vega, theta FROM orderbook.greeks WHERE symbol = $1",
+            "S50M26P1100",
+        )
+        assert row is not None
+        assert row["iv"] is None
+        assert row["delta"] is None
+        assert row["gamma"] is None
+        assert row["vega"] is None
+        assert row["theta"] is None
+    finally:
+        await tr.rollback()
+        await conn.close()
+
+
+async def test_greeks_index_exists(settings: Settings) -> None:
+    """ix_greeks_symbol_date index exists on (symbol, date DESC)."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.orderbook_dsn)
+    try:
+        rows = await conn.fetch(
+            "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'orderbook'"
+        )
+        defs = {r["indexname"]: r["indexdef"] for r in rows}
+        assert "ix_greeks_symbol_date" in defs
+        assert "(symbol, date DESC)" in defs["ix_greeks_symbol_date"]
+    finally:
+        await conn.close()
+
+
+async def test_greeks_quant_grants(settings: Settings) -> None:
+    """quant has SELECT, INSERT, UPDATE on orderbook.greeks; no DELETE."""
+    import asyncpg
+
+    conn = await asyncpg.connect(settings.orderbook_dsn)
+    try:
+        assert await conn.fetchval(
+            "SELECT has_table_privilege('quant', 'orderbook.greeks', 'SELECT')"
+        )
+        assert await conn.fetchval(
+            "SELECT has_table_privilege('quant', 'orderbook.greeks', 'INSERT')"
+        )
+        assert await conn.fetchval(
+            "SELECT has_table_privilege('quant', 'orderbook.greeks', 'UPDATE')"
+        )
+        assert not await conn.fetchval(
+            "SELECT has_table_privilege('quant', 'orderbook.greeks', 'DELETE')"
+        )
     finally:
         await conn.close()

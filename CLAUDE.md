@@ -65,7 +65,7 @@ docker compose up -d
   │     ├── db_execution     — execution.{orders, fills, order_events}
   │     │                      + frozen-state-machine triggers
   │     └── db_orderbook     — orderbook.{raw_events, trades, book_snapshots,
-  │                            settlements, gap_windows, dq_manifests}
+  │                            settlements, gap_windows, dq_manifests, greeks}
   └── quant-mongo    (mongo:latest)
         └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
@@ -93,12 +93,14 @@ immutable) and auto-append one audit row per transition. The standalone
 database** (mirroring `db_market_data` / `db_execution`) holding the `orderbook` schema:
 **TimescaleDB hypertables** for the high-volume event streams (`orderbook.raw_events`
 append-only, `orderbook.trades`, derived `orderbook.book_snapshots`) plus **plain** reference
-tables (`orderbook.settlements`, `orderbook.gap_windows`, `orderbook.dq_manifests`). Prices are
-`numeric(18,6)`, volume `bigint`, capture clocks `bigint` nanoseconds. The append-only binary
-raw log (NVMe) + Parquet cold tier are the systems of record; this DB is the regenerable
-queryable mirror. Compression + a **provisional** (Stage-B-calibration-deferred) retention
-policy sit on the hypertables. The standalone `quant-orderbook-engine` becomes the sole writer;
-init script `14_schema_orderbook.sql`.
+tables (`orderbook.settlements`, `orderbook.gap_windows`, `orderbook.dq_manifests`) plus the
+derived EOD greeks table (`orderbook.greeks` — Black-76 IV/greeks for TFEX SET50 options, one
+row per (date, option-symbol), freely regenerable; `init-scripts/15_orderbook_greeks.sql`).
+Prices are `numeric(18,6)`, volume `bigint`, capture clocks `bigint` nanoseconds. The
+append-only binary raw log (NVMe) + Parquet cold tier are the systems of record; this DB is the
+regenerable queryable mirror. Compression + a **provisional** (Stage-B-calibration-deferred)
+retention policy sit on the hypertables. The standalone `quant-orderbook-engine` becomes the
+sole writer; init script `14_schema_orderbook.sql`.
 
 All containers join the external network `quant-network` (created once per host).
 Downstream services reach databases by hostname (`quant-postgres`, `quant-mongo`),

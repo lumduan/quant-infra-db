@@ -454,7 +454,9 @@ Phase 1 (Bootstrap + Docker Compose + Network)
 > `db_orderbook` (`feature-orderbook-engine`, Phase 1) — the order-book capture hot tier:
 > `orderbook.{raw_events, trades, book_snapshots, settlements, gap_windows, dq_manifests}`
 > (TimescaleDB hypertables for the event streams + plain reference tables;
-> `init-scripts/14_schema_orderbook.sql`).
+> `init-scripts/14_schema_orderbook.sql`) +
+> `orderbook.greeks` (derived EOD Black-76 IV/greeks for TFEX SET50 options, one row per
+> (date, option-symbol), freely regenerable; `init-scripts/15_orderbook_greeks.sql`).
 
 ---
 
