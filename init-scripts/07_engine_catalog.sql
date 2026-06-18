@@ -16,5 +16,8 @@ INSERT INTO engine_registry (slug, type, status, description) VALUES
   ('signals',     'EXTERNAL', 'dormant', 'Signal generation pipeline (future)'),
   -- feature-execution-engine Phase 2: canonical order router (host :8400),
   -- gateway-proxied; sim-first, no broker credential in the gateway.
-  ('execution',   'EXTERNAL', 'active',  'Standalone quant-execution-engine (host :8400), gateway-proxied; canonical order router (sim-first), no broker credential in the gateway')
+  ('execution',   'EXTERNAL', 'active',  'Standalone quant-execution-engine (host :8400), gateway-proxied; canonical order router (sim-first), no broker credential in the gateway'),
+  -- feature-orderbook-engine Phase 4 §4.1: durable L2/T&S capture + derived
+  -- greeks/features (host :8600), gateway-proxied; read-only market-data plane.
+  ('orderbook',   'EXTERNAL', 'active',  'Standalone quant-orderbook-engine (host :8600), gateway-proxied; durable L2/T&S capture + derived greeks/features (read-only, market-data plane)')
 ON CONFLICT (slug) DO NOTHING;
