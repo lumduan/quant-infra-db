@@ -26,3 +26,13 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_execution')\gexec
 -- of record; this DB is the regenerable queryable mirror.
 SELECT 'CREATE DATABASE db_orderbook'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_orderbook')\gexec
+-- db_ticker: durable hot-tier time & sales (T&S) capture store for the Ticker
+-- engine (feature-ticker-engine Phase 1; the tick plane, market-data plane, host
+-- :8800). A dedicated database (not a schema in db_orderbook) keeps the tick store
+-- independently owned, mirroring db_orderbook / db_market_data; the standalone
+-- quant-ticker-engine becomes the sole writer. It captures trades from two
+-- independent upstreams (Liberator TickerV2 + Streaming Pro source=3); the
+-- append-only binary raw logs are the systems of record, this DB the regenerable
+-- queryable mirror.
+SELECT 'CREATE DATABASE db_ticker'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_ticker')\gexec
