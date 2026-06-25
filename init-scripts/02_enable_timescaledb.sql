@@ -9,3 +9,6 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 \c db_orderbook
 CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+\c db_ticker
+CREATE EXTENSION IF NOT EXISTS timescaledb;

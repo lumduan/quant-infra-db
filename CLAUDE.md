@@ -64,8 +64,9 @@ docker compose up -d
   │     │                      universe_membership, ohlcv_adjusted view} + CAGGs
   │     ├── db_execution     — execution.{orders, fills, order_events}
   │     │                      + frozen-state-machine triggers
-  │     └── db_orderbook     — orderbook.{raw_events, trades, book_snapshots,
-  │                            settlements, gap_windows, dq_manifests, greeks}
+  │     ├── db_orderbook     — orderbook.{raw_events, trades, book_snapshots,
+  │     │                      settlements, gap_windows, dq_manifests, greeks}
+  │     └── db_ticker        — ticker.trades (T&S, source-tagged: Liberator + Streaming Pro)
   └── quant-mongo    (mongo:latest)
         └── csm_logs — backtest_results, model_params, signal_snapshots
 ```
@@ -101,6 +102,17 @@ append-only binary raw log (NVMe) + Parquet cold tier are the systems of record;
 regenerable queryable mirror. Compression + a **provisional** (Stage-B-calibration-deferred)
 retention policy sit on the hypertables. The standalone `quant-orderbook-engine` becomes the
 sole writer; init script `14_schema_orderbook.sql`.
+
+`db_ticker` is the durable hot-tier time & sales (T&S) store for the Ticker engine
+(`feature-ticker-engine`, Phase 1 — "the tick plane"; market-data plane, host `:8800`). It is a
+**dedicated database** (mirroring `db_orderbook`) holding the `ticker` schema: a single
+**TimescaleDB hypertable** `ticker.trades` (the high-volume trade stream). Trades come from
+**two independent upstreams, never `vs`-unioned** (ADR TK2) — the Liberator `TickerV2` feed and
+the Streaming Pro bridge (svc-3) — distinguished by the `source` column (`liberator` carries the
+venue `vs`; `streaming_pro` carries the per-frame `seq`). Prices are `numeric(18,6)`, volume
+`bigint`. The append-only binary raw logs are the systems of record; this DB is the regenerable
+queryable mirror (SELECT, INSERT only — no UPDATE/DELETE). The standalone `quant-ticker-engine`
+is the sole writer; init script `17_schema_ticker.sql`.
 
 All containers join the external network `quant-network` (created once per host).
 Downstream services reach databases by hostname (`quant-postgres`, `quant-mongo`),
