@@ -36,3 +36,13 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_orderbook')\gexec
 -- queryable mirror.
 SELECT 'CREATE DATABASE db_ticker'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_ticker')\gexec
+-- db_crypto: durable hot-tier store for the Crypto Capture engine
+-- (feature-crypto-engine Phase 1; 24/7 digital-asset L2 depth + time & sales from
+-- Binance TH + Bitkub; market-data plane, host :9000). A dedicated database (not a
+-- schema in db_orderbook) keeps the crypto store independently owned, mirroring
+-- db_ticker / db_orderbook; the standalone quant-crypto-engine is the sole writer.
+-- A pure data plane (ADR CX1/D1) — the venues are public no-auth WebSockets, so the
+-- engine holds no broker credential. Per-venue append-only binary raw logs are the
+-- systems of record; this DB is the regenerable queryable mirror.
+SELECT 'CREATE DATABASE db_crypto'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_crypto')\gexec
