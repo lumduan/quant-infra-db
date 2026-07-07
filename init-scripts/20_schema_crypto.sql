@@ -9,7 +9,7 @@
 -- (ADR CX1/D1 — a pure data plane; the venues are public no-auth WebSockets so the
 -- engine holds no broker credential at all).
 --
--- The standalone ``quant-crypto-engine`` service (host :9000, market-data plane,
+-- The standalone ``quant-crypto-engine`` service (host :9100, market-data plane,
 -- sibling to quant-orderbook-engine / quant-ticker-engine) is the sole writer. It
 -- captures depth + trades per venue, each banked to its OWN append-only binary raw
 -- log (the system of record); THIS hot tier is the regenerable queryable mirror.
