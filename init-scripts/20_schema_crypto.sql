@@ -118,10 +118,13 @@ CREATE INDEX IF NOT EXISTS idx_crypto_book_venue_sym_ts
     ON crypto.book_updates (venue, symbol, ts DESC);
 
 -- ---------------------------------------------------------------------------
--- Compression + a PROVISIONAL retention backstop (mirror 17_schema_ticker.sql;
--- Phase-2-calibration-deferred against real 24/7 volume). 30 days >> the hot window;
--- the engine's cold-verified pruning LEADS (ADR CX16 store->prune) — never drop
--- ahead of a verified cold copy; the raw logs are the non-backfillable record.
+-- Compression + retention, CALIBRATED against real 24/7 volume (2026-07-10: ~8 GB/day —
+-- raw_events ~5, trades ~2, book_updates ~1). The original provisional 30 days was untenable
+-- for a 24/7 feed (~240 GB before the first drop). raw_events is NOT on the read path (the API
+-- + /premium read crypto.trades + crypto.book_updates) and is a decoded copy of the raw log, so
+-- it gets the shortest window. The engine's cold-verified pruning still LEADS (ADR CX16
+-- store->prune) — never drop ahead of a verified cold copy; the raw logs + NAS cold-tier Parquet
+-- are the non-backfillable record, so these derived hot-tier chunks are freely droppable.
 -- ---------------------------------------------------------------------------
 ALTER TABLE crypto.raw_events SET (
     timescaledb.compress,
@@ -129,7 +132,7 @@ ALTER TABLE crypto.raw_events SET (
     timescaledb.compress_orderby   = 'ts DESC'
 );
 SELECT add_compression_policy('crypto.raw_events', INTERVAL '3 days', if_not_exists => TRUE);
-SELECT add_retention_policy('crypto.raw_events', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('crypto.raw_events', INTERVAL '2 days', if_not_exists => TRUE);
 
 ALTER TABLE crypto.trades SET (
     timescaledb.compress,
@@ -137,7 +140,7 @@ ALTER TABLE crypto.trades SET (
     timescaledb.compress_orderby   = 'ts DESC'
 );
 SELECT add_compression_policy('crypto.trades', INTERVAL '3 days', if_not_exists => TRUE);
-SELECT add_retention_policy('crypto.trades', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('crypto.trades', INTERVAL '3 days', if_not_exists => TRUE);
 
 ALTER TABLE crypto.book_updates SET (
     timescaledb.compress,
@@ -145,7 +148,7 @@ ALTER TABLE crypto.book_updates SET (
     timescaledb.compress_orderby   = 'ts DESC'
 );
 SELECT add_compression_policy('crypto.book_updates', INTERVAL '3 days', if_not_exists => TRUE);
-SELECT add_retention_policy('crypto.book_updates', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('crypto.book_updates', INTERVAL '3 days', if_not_exists => TRUE);
 
 -- ---------------------------------------------------------------------------
 -- Service-role grants (least-privilege; mirror 17_schema_ticker.sql:98-106).
