@@ -46,3 +46,10 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_ticker')\gexec
 -- systems of record; this DB is the regenerable queryable mirror.
 SELECT 'CREATE DATABASE db_crypto'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_crypto')\gexec
+-- db_cash_and_carry_set_tfex: strategy-private store for the SET<->TFEX single-stock-
+-- futures cash-and-carry (basis) arbitrage strategy (`cash-and-carry-set-tfex`, host
+-- :8110). A dedicated database (mirroring db_csm_set / db_tfex_s50_multi_tf_swing) so
+-- the strategy's per-decision / per-leg statistics are independently owned; the gateway
+-- remains the sole writer to db_gateway (this strategy POSTs its daily report over HTTP).
+SELECT 'CREATE DATABASE db_cash_and_carry_set_tfex'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'db_cash_and_carry_set_tfex')\gexec
