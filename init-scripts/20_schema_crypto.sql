@@ -116,6 +116,15 @@ SELECT create_hypertable('crypto.book_updates', 'ts',
     chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_crypto_book_venue_sym_ts
     ON crypto.book_updates (venue, symbol, ts DESC);
+-- Partial index for the /premium book-mid read
+--   SELECT DISTINCT ON (venue, symbol) ... WHERE update_type='snapshot' ORDER BY venue,symbol,ts DESC
+-- Snapshots are SPARSE among frequent diffs (~1:12), so the full (venue,symbol,ts) index above
+-- satisfies the ordering but applies update_type as a heap FILTER, walking past many diff rows to
+-- find each latest snapshot — a cold-cache random-I/O storm (bit hard after the 2026-07-12 PG
+-- restart: /premium timed out, starved the hot-tier writer). This snapshot-only partial index makes
+-- the read an Index-Only Scan (/premium 8 s -> 0.05 s). See [[project-crypto-db-retention-scheduler]].
+CREATE INDEX IF NOT EXISTS idx_crypto_book_snap_latest
+    ON crypto.book_updates (venue, symbol, ts DESC) WHERE update_type = 'snapshot';
 
 -- ---------------------------------------------------------------------------
 -- Compression + retention, CALIBRATED against real 24/7 volume (2026-07-10: ~8 GB/day —

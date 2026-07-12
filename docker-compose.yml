@@ -3,6 +3,20 @@ services:
     image: timescale/timescaledb:latest-pg16
     container_name: quant-postgres
     restart: always
+    # Postmaster GUCs. The image's PG defaults are far too low for an 8-database TimescaleDB
+    # instance: max_worker_processes=8 (default) starved db_crypto's background-worker scheduler,
+    # so its retention/compression jobs never ran (38 GB bloat, root 79%, 2026-07-12);
+    # shared_buffers=128 MB is the tiny default. shared_preload_libraries is pinned here so this
+    # command override can never drop TimescaleDB. (shared_buffers kept conservative at 1 GB because
+    # this host runs hot on memory.) See [[project-crypto-db-retention-scheduler]].
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=timescaledb"
+      - "-c"
+      - "max_worker_processes=16"
+      - "-c"
+      - "shared_buffers=1GB"
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
