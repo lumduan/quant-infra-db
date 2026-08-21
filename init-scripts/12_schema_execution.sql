@@ -85,6 +85,10 @@ CREATE SCHEMA IF NOT EXISTS execution;
 CREATE TABLE IF NOT EXISTS execution.orders (
     client_order_id TEXT           NOT NULL,
     broker          TEXT           NOT NULL
+        -- ⚠️ SUPERSEDED by 25_execution_broker_streaming_pro.sql: 'settrade' was
+        -- removed from the engine 2026-07-18 and 'streaming_pro' replaced it.
+        -- This line is the Phase-0 original, kept so the file still reads as
+        -- written; 25_* is the live constraint. Do not re-derive it from here.
         CHECK (broker IN ('sim', 'liberator', 'settrade')),
     broker_order_id TEXT,
     account         TEXT           NOT NULL,
