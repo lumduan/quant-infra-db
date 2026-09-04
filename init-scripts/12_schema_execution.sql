@@ -335,3 +335,85 @@ GRANT SELECT, INSERT, UPDATE ON execution.orders TO quant;
 GRANT SELECT, INSERT ON execution.fills TO quant;
 GRANT SELECT, INSERT ON execution.order_events TO quant;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA execution TO quant;
+
+-- ============================================================================
+-- execution.fee_observations — what the BROKER says a trade costs.
+-- ----------------------------------------------------------------------------
+-- Added 2026-09-04. The canonical fee schedule
+-- (quant-execution-engine .../reference/fee_schedule.toml) is a POLICY: a fixed,
+-- deliberately conservative basis pinned at the most expensive tier so strategy
+-- calculations are deterministic. This table holds the FACTS it is checked against.
+--
+-- 🔴 THE CHECK IS ONE-SIDED, and the asymmetry is the point:
+--     observed <= basis  ->  normal (a promotion or a better tier). Record, no alert.
+--     observed >  basis  ->  the conservative basis is no longer conservative, so every
+--                            strategy calculation is UNDERSTATING cost. Alert + adopt.
+-- Direction matters more than magnitude: a basis that is too expensive makes a strategy
+-- look worse than it is and is safe; too cheap makes it look better, and in this umbrella
+-- has already turned a losing result into an apparently positive one.
+--
+-- 🔴 TWO KINDS OF ROW, NEVER AVERAGED TOGETHER. `observation_kind` separates an
+-- INDICATIVE QUOTE (what a hypothetical order WOULD cost) from a CHARGED amount (what a
+-- real fill DID cost). They have different epistemic status; conflating them would let a
+-- quote silently stand in for evidence. The blotter sweep that writes `charged` rows is
+-- NOT built yet — this table is shaped so it lands without redesign.
+--
+-- 🔴 TIER DECLINE IS NOT DRIFT. Commission tiers accrue on MONTHLY volume, so an observed
+-- rate that falls through a month and resets at the boundary is CORRECT BEHAVIOUR.
+-- `fee_month` and `month_to_date_contracts` exist so alerting can compare like months at
+-- like volume instead of reading a normal tier decline as a broken schedule.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS execution.fee_observations (
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    observed_at             TIMESTAMPTZ  NOT NULL,
+    observation_kind        TEXT         NOT NULL
+        CHECK (observation_kind IN ('indicative_quote', 'charged')),
+    source                  TEXT         NOT NULL,
+
+    broker                  TEXT         NOT NULL,
+    account                 TEXT         NOT NULL,
+
+    -- Probe parameters. Fixed by reference/probe_order.toml so rows are comparable across
+    -- days; stored per row anyway, because a definition that changed silently would other-
+    -- wise be invisible in the series it produced.
+    symbol                  TEXT         NOT NULL,
+    contract_month          TEXT         NOT NULL,
+    is_roll_boundary        BOOLEAN      NOT NULL DEFAULT FALSE,
+    side                    TEXT         NOT NULL,
+    quantity                INTEGER      NOT NULL CHECK (quantity > 0),
+    price                   NUMERIC(18,5) NOT NULL CHECK (price >= 0),
+
+    -- Parsed figures. NULL means "the source did not report it" — never zero.
+    commission              NUMERIC(18,5),
+    exchange_fee            NUMERIC(18,5),
+    clearing_fee            NUMERIC(18,5),
+    vat                     NUMERIC(18,5),
+    total_fee               NUMERIC(18,5),
+
+    -- Tier context: what makes a declining series legible as tiers rather than drift.
+    fee_month               DATE         NOT NULL,
+    month_to_date_contracts INTEGER,
+
+    -- Everything the source returned, verbatim. The parsed columns above are an
+    -- interpretation; this is the evidence, and it survives a parser being wrong.
+    raw_response            JSONB        NOT NULL,
+
+    -- The comparison outcome, stored so an alert can be reconstructed after the fact.
+    basis_value             NUMERIC(18,5),
+    basis_effective_from    DATE,
+    verdict                 TEXT CHECK (verdict IN ('at_or_below', 'above')),
+
+    inserted_at             TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE execution.fee_observations IS
+    'What the broker says a trade costs. Checked ONE-SIDEDLY against the canonical fee '
+    'basis: observed<=basis is normal and silent; observed>basis alerts and is adopted as '
+    'a new dated basis entry. Never averaged across observation_kind.';
+
+CREATE INDEX IF NOT EXISTS fee_observations_month_idx
+    ON execution.fee_observations (fee_month, symbol, observation_kind);
+CREATE INDEX IF NOT EXISTS fee_observations_observed_at_idx
+    ON execution.fee_observations (observed_at DESC);
