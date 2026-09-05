@@ -335,6 +335,9 @@ GRANT SELECT, INSERT, UPDATE ON execution.orders TO quant;
 GRANT SELECT, INSERT ON execution.fills TO quant;
 GRANT SELECT, INSERT ON execution.order_events TO quant;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA execution TO quant;
+-- ⚠️ NOT EXHAUSTIVE. Tables added after this point carry their own GRANT beside their DDL
+-- (see execution.fee_observations below). This block covers the three original tables only;
+-- reading it as the complete grant set is what produced the 2026-09-04 gap.
 
 -- ============================================================================
 -- execution.fee_observations — what the BROKER says a trade costs.
@@ -417,3 +420,16 @@ CREATE INDEX IF NOT EXISTS fee_observations_month_idx
     ON execution.fee_observations (fee_month, symbol, observation_kind);
 CREATE INDEX IF NOT EXISTS fee_observations_observed_at_idx
     ON execution.fee_observations (observed_at DESC);
+
+-- 🔴 GRANT COLOCATED WITH THE TABLE, DELIBERATELY — this table was added BELOW the grants
+-- block above and shipped with no grant at all (2026-09-04). CREATE TABLE runs as the
+-- superuser, so `quant` got ZERO privileges, and `quant` querying information_schema would
+-- then see NO TABLE AT ALL rather than a permission error: the gap presents as absence.
+-- Keeping the grant next to its table makes forgetting it a single-location omission
+-- instead of a cross-file one. `tests/test_schema_grants.py` enforces it.
+--
+-- SELECT, INSERT only — matching execution.fills and execution.order_events, NOT
+-- execution.orders. Observations are evidence and the basis is an append-only dated series;
+-- an observation that can be UPDATEd is not evidence. No sequence grant is needed: `id` is
+-- GENERATED ALWAYS AS IDENTITY, whose sequence is internally linked and covered by INSERT.
+GRANT SELECT, INSERT ON execution.fee_observations TO quant;
