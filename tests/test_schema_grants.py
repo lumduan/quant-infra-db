@@ -92,7 +92,12 @@ def test_fee_observations_is_granted_and_APPEND_ONLY() -> None:
     text = (INIT_DIR / "12_schema_execution.sql").read_text(encoding="utf-8")
     grants = [
         g.strip()
-        for g in re.findall(r"(GRANT[^;]*?ON\s+execution\.fee_observations[^;]*);", text, re.I)
+        # Anchored to a STATEMENT line: unanchored, `GRANT[^;]*?` also started inside a SQL
+        # comment that says "grant" and ran on to the real statement, so the captured text
+        # carried the comment's words (the 2026-09-28 #351 comment mentions "ALL SEQUENCES").
+        for g in re.findall(
+            r"^\s*(GRANT[^;]*?ON\s+execution\.fee_observations\b[^;]*);", text, re.I | re.M
+        )
     ]
     assert len(grants) == 1, f"expected exactly one grant, found {len(grants)}: {grants}"
     granted = grants[0].upper()
@@ -113,3 +118,144 @@ def test_the_grant_follows_the_table_it_belongs_to() -> None:
     create_at = text.index("CREATE TABLE IF NOT EXISTS execution.fee_observations")
     grant_at = text.index("GRANT SELECT, INSERT ON execution.fee_observations")
     assert grant_at > create_at, "the grant must sit BELOW its CREATE TABLE, not in the block above"
+
+
+# --- SEQUENCES: the #351 class ----------------------------------------------------------------
+# `pg_dump` reads every sequence's `last_value`, so a dumping role needs SELECT on each one. And
+# `GRANT ... ON ALL SEQUENCES IN SCHEMA s` covers only the sequences that EXIST when it runs, so
+# whether a sequence is covered is a matter of POSITION in the file, which a text search for "a
+# grant exists" cannot see. That is exactly how execution.fee_observations_id_seq was missed:
+# its table was created below the schema's ALL SEQUENCES line, and the EH9 backup of AWS's
+# real-money database shipped 20-byte files for 12 nights (#351).
+
+_CREATE_RE = re.compile(r"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+([a-z_]+)\.([a-z_]+)", re.I)
+_SEQ_COL_RE = re.compile(
+    r"^\s*([a-z_]+)\s+(?:(?:SMALL|BIG)?INT(?:EGER)?\s+GENERATED\s+(?:ALWAYS|BY\s+DEFAULT)"
+    r"\s+AS\s+IDENTITY|(?:BIG)?SERIAL\b)",
+    re.I | re.M,
+)
+
+
+#: 🔴 A KNOWN GAP, FILED NOT FIXED (2026-09-28, #351 follow-up): the crypto DQ table's sequence is
+#: created with no sequence grant for `quant`. Latent: nothing dumps db_crypto as `quant` today.
+#: Making a schema file grant something it never granted changes what a fresh install does.
+KNOWN_UNCOVERED_SEQUENCES: frozenset[str] = frozenset({"crypto.gap_windows_gap_id_seq"})
+
+#: NOT EXAMINED, and said so rather than read as clean: these files `\c <db>` and create
+#: UNQUALIFIED tables (the per-strategy databases). Which role creates them, and what `quant` can
+#: read there, was not established in this change, so the positional check below has no schema to
+#: judge them by. Before this list existed the check skipped their 8 sequence columns SILENTLY.
+UNQUALIFIED_SEQUENCE_FILES: frozenset[str] = frozenset(
+    {
+        "03_schema_csm_set.sql",
+        "07_engine_catalog.sql",
+        "08_schema_db_tfex_s50_multi_tf_swing.sql",
+        "23_schema_db_cash_and_carry_set_tfex.sql",
+    }
+)
+
+
+def _uncovered_in(text: str) -> tuple[set[str], int]:
+    """``(uncovered sequences, count of sequence columns with no schema-qualified owner)``.
+
+    Covered means ONE of the following, each judged by position in the same file:
+    - an explicit `GRANT ... ON SEQUENCE <seq> ... TO quant` anywhere;
+    - a `GRANT ... ON ALL SEQUENCES IN SCHEMA <s> ... TO quant` placed AFTER the column;
+    - an `ALTER DEFAULT PRIVILEGES IN SCHEMA <s> GRANT ... ON SEQUENCES TO quant` placed BEFORE it.
+    """
+    creates = [
+        (m.start(), m.group(1).lower(), m.group(2).lower()) for m in _CREATE_RE.finditer(text)
+    ]
+    explicit = {
+        m.group(1).lower()
+        for m in re.finditer(
+            r"GRANT[^;]*?ON\s+SEQUENCE\s+([a-z_]+\.[a-z_]+)[^;]*TO\s+quant", text, re.I
+        )
+    }
+    all_after = [
+        (m.start(), m.group(1).lower())
+        for m in re.finditer(
+            r"GRANT[^;]*?ON\s+ALL\s+SEQUENCES\s+IN\s+SCHEMA\s+([a-z_]+)[^;]*TO\s+quant", text, re.I
+        )
+    ]
+    default_before = [
+        (m.start(), m.group(1).lower())
+        for m in re.finditer(
+            r"ALTER\s+DEFAULT\s+PRIVILEGES\s+IN\s+SCHEMA\s+([a-z_]+)\s+GRANT[^;]*ON\s+SEQUENCES"
+            r"[^;]*TO\s+quant",
+            text,
+            re.I,
+        )
+    ]
+    missing: set[str] = set()
+    unowned = 0
+    for col in _SEQ_COL_RE.finditer(text):
+        owners = [c for c in creates if c[0] < col.start()]
+        if not owners:
+            unowned += 1
+            continue
+        _, schema, table = owners[-1]
+        seq = f"{schema}.{table}_{col.group(1).lower()}_seq"
+        pos = col.start()
+        if seq in explicit:
+            continue
+        if any(p > pos and s == schema for p, s in all_after):
+            continue
+        if any(p < pos and s == schema for p, s in default_before):
+            continue
+        missing.add(seq)
+    return missing, unowned
+
+
+def _uncovered_sequences() -> set[str]:
+    """Every schema-qualified identity/serial sequence in the init scripts `quant` cannot SELECT."""
+    missing: set[str] = set()
+    for sql_file in sorted(INIT_DIR.glob("*.sql")):
+        missing |= _uncovered_in(sql_file.read_text(encoding="utf-8"))[0]
+    return missing
+
+
+def test_no_NEW_sequence_is_unreadable_to_the_dumping_role() -> None:
+    """🔴 The #351 regression guard: pg_dump -U quant is denied on an uncovered sequence."""
+    unexpected = _uncovered_sequences() - KNOWN_UNCOVERED_SEQUENCES
+    assert not unexpected, (
+        f"{sorted(unexpected)}: sequence(s) `quant` cannot SELECT. `pg_dump -U quant` will be "
+        "DENIED and the dump will be empty (#351: 12 nights of 20-byte real-money backups). "
+        "Grant `SELECT ON SEQUENCE` beside the table, or place it below an ALL SEQUENCES grant."
+    )
+
+
+def test_the_known_uncovered_list_is_not_STALE() -> None:
+    stale = KNOWN_UNCOVERED_SEQUENCES - _uncovered_sequences()
+    assert not stale, f"{sorted(stale)} are now covered — remove them from the known list"
+
+
+def test_POSITIVE_CONTROL_the_check_flags_the_original_351_defect() -> None:
+    """Strip this change's two lines from the real file: the check must name the sequence.
+
+    Without this, a check that could never fail would pass every run above and prove nothing.
+    """
+    text = (INIT_DIR / "12_schema_execution.sql").read_text(encoding="utf-8")
+    fixed = [
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA execution GRANT SELECT ON SEQUENCES TO quant;",
+        "GRANT SELECT ON SEQUENCE execution.fee_observations_id_seq TO quant;",
+    ]
+    for line in fixed:
+        assert text.count(line) == 1, f"expected exactly one {line!r}"
+    before = text
+    for line in fixed:
+        before = before.replace(line, "")
+    assert _uncovered_in(before)[0] == {"execution.fee_observations_id_seq"}
+    assert _uncovered_in(text)[0] == set()
+    # and each line alone is sufficient — neither is decoration
+    for keep in fixed:
+        other = next(x for x in fixed if x != keep)
+        assert _uncovered_in(text.replace(other, ""))[0] == set(), f"{keep!r} alone must cover it"
+
+
+def test_files_the_check_CANNOT_judge_are_NAMED_not_skipped() -> None:
+    """A new file whose sequences have no schema-qualified table must surface here, not pass."""
+    unjudged = {
+        f.name for f in INIT_DIR.glob("*.sql") if _uncovered_in(f.read_text(encoding="utf-8"))[1]
+    }
+    assert unjudged == UNQUALIFIED_SEQUENCE_FILES
