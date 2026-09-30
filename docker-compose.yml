@@ -40,8 +40,11 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
-    ports:
-      - "27017:27017"
+    # NOT published on the host (TK-0621, operator ruling 2026-09-29). Every client in this container's own
+    # connection log, 2026-09-27 06:01Z -> 2026-09-30 00:50Z (TK-0621 S1, two EOD runs), was csm-set on quant-network
+    # or the healthcheck inside the container. The host port served only the LAN, where the reused root
+    # password was enough to log in. From HOME itself: `docker exec quant-mongo mongosh`.
+    # To restore host access, publish on loopback only: "127.0.0.1:27017:27017". Never 0.0.0.0.
     volumes:
       - ./mongo_data:/data/db
       - ./init-scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
