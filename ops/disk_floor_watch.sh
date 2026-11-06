@@ -38,7 +38,9 @@
 #   AMBER into RED would page every afternoon on a condition that fixes itself, and folding it
 #   into GREEN would hide the approach. The sibling has no phase to be aware of.
 #
-# Usage:  ops/disk_floor_watch.sh [--floor-gb 120] [--margin-gb 5] [--no-slack] [--quiet]
+# Usage:  ops/disk_floor_watch.sh [--floor-gb N] [--margin-gb N] [--no-slack] [--quiet]
+#         (the floor DEFAULTS to whatever poring-lab's recorder enforces — see below; --floor-gb
+#          overrides it, which is for tests and for answering "what if" questions, not for daily use)
 #         ops/disk_floor_watch.sh --force-free-gb 118   # TEST ONLY: pretend df said this
 #         ops/disk_floor_watch.sh --force-hhmm 21:45     # TEST ONLY: pretend the clock said this
 #
@@ -49,8 +51,22 @@
 # =============================================================================================
 set -uo pipefail
 
-FLOOR_GB=120
-MARGIN_GB=5
+# 🔴 THE FLOOR IS NOT OURS AND IT MOVES. Do not hard-code it.
+# poring-lab's recorder owns it, declares it in code, and the operator has changed it TWICE in two
+# days: 140 GB -> 120 (2026-11-05) -> 100 (2026-11-06, commit 8b46640, ADR-0010 Amendment). A
+# checker that restates the number is wrong again within a day and says nothing when it is.
+# So this READS the number from the instrument that enforces it, and when it cannot, it falls back
+# AND SAYS IT FELL BACK — a silently-defaulted floor is worse than no floor, because the verdict
+# still looks authoritative. (The umbrella's rule: prefer a pointer to the instrument over a
+# restated measurement; the measurement belongs where it is produced.)
+PORING_LAB=/home/batt/docker/poring-lab
+PORING_LAB_SRC=scripts/dataset_ship.py
+FLOOR_GB_FALLBACK=100
+FLOOR_GB=""
+# 20 GB, justified on its own terms rather than inherited: one nightly give-back is 8.7-13.4 GiB,
+# so a 20 GB margin raises AMBER roughly one-and-a-half cycles before the floor — enough warning to
+# act inside a maintenance window. It is NOT 20 because 100+20 happens to be the previous floor.
+MARGIN_GB=20
 NO_SLACK=0
 QUIET=0
 FORCE_FREE=""
@@ -76,6 +92,18 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
+
+# --- 0. read the floor from the instrument that enforces it ------------------------------------
+FLOOR_SRC=""
+if [ -z "$FLOOR_GB" ]; then
+  RAW=$(git -C "$PORING_LAB" show "origin/main:$PORING_LAB_SRC" 2>/dev/null \
+        | sed -n 's/^MIN_FREE_BYTES[[:space:]]*=[[:space:]]*\([0-9]\+\)[[:space:]]*\*[[:space:]]*10\*\*9.*/\1/p' | head -1)
+  case "$RAW" in
+    ''|*[!0-9]*) FLOOR_GB="$FLOOR_GB_FALLBACK"
+                 FLOOR_SRC=" [floor FELL BACK to ${FLOOR_GB_FALLBACK} GB — could not read MIN_FREE_BYTES from ${PORING_LAB_SRC} at origin/main]" ;;
+    *)           FLOOR_GB="$RAW"; FLOOR_SRC="" ;;
+  esac
+fi
 
 NOW_ICT=$(TZ=Asia/Bangkok date '+%Y-%m-%d %H:%M:%S')
 HHMM=$(TZ=Asia/Bangkok date '+%H:%M')
@@ -158,6 +186,7 @@ else
 fi
 
 [ -n "$FORCE_HHMM" ] && FORCED="${FORCED} [FORCED CLOCK ${FORCE_HHMM} — not the real time]"
+FORCED="${FORCED}${FLOOR_SRC}"
 MSG="[disk-floor] ${VERDICT} ${NOW_ICT} ICT${FORCED} — free=${FREE_GB} GB  pg_total=${PG_TOTAL} GiB (crypto ${PG_CRYPTO}, orderbook ${PG_OB})  next_retention_gives_back=${NEXT_DROP} GiB  phase=$([ "$POST" = 1 ] && echo post-retention || echo pre-retention) — ${WHY}"
 
 # --- 5. log BEFORE posting, so a dropped Slack post still leaves the text on disk -------------
