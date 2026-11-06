@@ -205,8 +205,15 @@ printf '%s\n' "$MSG" >> "$LOG" 2>/dev/null
 
 # --- 6. Slack: RED always; otherwise only on a CHANGE of verdict ------------------------------
 # A daily "nothing wrong" is the alert fatigue DC-0007 is about, so a repeated GREEN is silent.
+# 🔴 THE STATE MUST NOT ADVANCE PAST A VERDICT WHOSE ANNOUNCEMENT FAILED (session:HA's review,
+# 2026-11-06). It used to be written here, BEFORE the post. So a non-RED verdict CHANGE whose post
+# failed was announced once, failed, and then never again: the next run compared against the
+# already-advanced state, saw "no change", and stayed silent. A missed alert, permanently, and
+# invisible — the state file said the job was done.
+# ⇒ the state now records THE LAST VERDICT SUCCESSFULLY ANNOUNCED (or simply observed, when no
+# announcement was due), so a failed post is RETRIED on the next run.
 PREV=$(cat "$STATE" 2>/dev/null)
-printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null
+POST_OK=1
 if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }; then
   # shellcheck disable=SC1091
   [ -f /home/batt/.config/quant-pm/env ] && . /home/batt/.config/quant-pm/env
@@ -224,13 +231,18 @@ if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }
     if [ "$HTTP" = "200" ]; then
       printf '[post] status=ok HTTP 200 verdict=%s\n' "$VERDICT" >> "$LOG" 2>/dev/null
     else
-      printf '[post] status=FAILED HTTP %s — the %s verdict above was NOT DELIVERED\n' \
+      POST_OK=0
+      printf '[post] status=FAILED HTTP %s — the %s verdict above was NOT DELIVERED; the state is NOT advanced, so the next run RETRIES it\n' \
         "${HTTP:-none}" "$VERDICT" >> "$LOG" 2>/dev/null
     fi
   else
-    printf '[post] status=SKIPPED no PM_SLACK_WEBHOOK in the environment — the %s verdict above was NOT DELIVERED\n' \
+    POST_OK=0
+    printf '[post] status=SKIPPED no PM_SLACK_WEBHOOK in the environment — the %s verdict above was NOT DELIVERED; the state is NOT advanced, so the next run RETRIES it\n' \
       "$VERDICT" >> "$LOG" 2>/dev/null
   fi
 fi
+
+# Advance the state ONLY if nothing was owed, or what was owed got through.
+if [ "$POST_OK" = 1 ]; then printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null; fi
 
 exit "$CODE"

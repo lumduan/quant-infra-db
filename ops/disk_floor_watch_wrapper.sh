@@ -50,8 +50,20 @@ set -- ${_ARGS[@]+"${_ARGS[@]}"}
 # Refresh the ref. A failure is NOT fatal — a slightly stale answer still beats no answer — but it
 # is ANNOUNCED, with the ref's age, so nobody reads a stale verdict as a current one.
 if [ "$FORCE_FETCH_FAIL" = 1 ] || ! timeout 25 git -C "$REPO" fetch -q --no-tags origin main 2>/dev/null; then
-  AGE_D=$(( ( $(date +%s) - $(git -C "$REPO" log -1 --format=%ct origin/main 2>/dev/null || date +%s) ) / 86400 ))
-  NOTE=" [⚠️ FETCH FAILED — running the last-fetched origin/main, ${AGE_D}d old; a merged fix may NOT be in this run]"
+  # 🔴 AGE IS TIME SINCE THE LAST SUCCESSFUL FETCH, not origin/main's commit date (session:HA's
+  # review, 2026-11-06). The commit date misleads in the REASSURING direction, which is the
+  # dangerous one: a merge one minute ago with a week of failed fetches would have printed
+  # "0d old" — the ref looking brand new precisely when it is most stale. FETCH_HEAD's mtime is
+  # written by a successful fetch, so it answers the question actually being asked.
+  FH="$REPO/.git/FETCH_HEAD"
+  [ -f "$FH" ] || FH="$(git -C "$REPO" rev-parse --git-dir 2>/dev/null)/FETCH_HEAD"
+  LASTFETCH=$(stat -c %Y "$FH" 2>/dev/null)
+  if [ -n "$LASTFETCH" ]; then
+    AGE_H=$(( ( $(date +%s) - LASTFETCH ) / 3600 ))
+    NOTE=" [⚠️ FETCH FAILED — last SUCCESSFUL fetch was ${AGE_H}h ago; a merged fix may NOT be in this run]"
+  else
+    NOTE=" [⚠️ FETCH FAILED — and FETCH_HEAD is absent, so the last successful fetch is UNKNOWN; a merged fix may NOT be in this run]"
+  fi
   [ "$FORCE_FETCH_FAIL" = 1 ] && NOTE="${NOTE} [FORCED — not a real fetch failure]"
 fi
 
