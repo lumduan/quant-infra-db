@@ -276,7 +276,20 @@ if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }
   fi
 fi
 
-# Advance the state ONLY if nothing was owed, or what was owed got through.
-if [ "$POST_OK" = 1 ]; then printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null; fi
+# Advance the state ONLY if nothing was owed, or what was owed got through — AND ONLY ON A REAL
+# RUN. session:HA's NOTE 2, which is (b) in another costume: a run that announces nothing BY DESIGN
+# used to write the state anyway, because POST_OK stays 1 when no post was attempted.
+#
+# 🔴 THE FAILURE: a forced or --no-slack test writes a verdict; the real verdict later BECOMES that
+# verdict; the next run sees "no change" and says nothing. The alert is lost to a test that ran
+# hours earlier. I walked into exactly this today and papered over it by resetting the state file
+# BY HAND — which is the tell that the script, not the operator, should be handling it.
+#
+# ⇒ a diagnostic must not be able to mutate the state the alarm depends on.
+if [ "$NO_SLACK" = 1 ] || [ -n "$FORCE_FREE" ] || [ -n "$FORCE_HHMM" ]; then
+  printf '[state] NOT advanced: this was a diagnostic run (--no-slack/--force-*), so it cannot mask a later real change\n' >> "$LOG" 2>/dev/null
+elif [ "$POST_OK" = 1 ]; then
+  printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null
+fi
 
 exit "$CODE"
