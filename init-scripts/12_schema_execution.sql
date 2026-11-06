@@ -335,6 +335,14 @@ GRANT SELECT, INSERT, UPDATE ON execution.orders TO quant;
 GRANT SELECT, INSERT ON execution.fills TO quant;
 GRANT SELECT, INSERT ON execution.order_events TO quant;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA execution TO quant;
+-- 🔴 `ON ALL SEQUENCES` covers only the sequences that EXIST when this line runs. A sequence
+-- created later in this file (execution.fee_observations's identity) is not covered, and the
+-- nightly EH9 dump runs `pg_dump -U quant`, which reads every sequence's last_value: it was
+-- denied, and AWS's real-money backup shipped 20-byte files for 12 nights (#351). So every
+-- sequence created in this schema from here on inherits SELECT by default. This is the same
+-- statement quant-aws-infra applied on the live AWS database on 2026-09-21 (#351), so a fresh
+-- install now matches production.
+ALTER DEFAULT PRIVILEGES IN SCHEMA execution GRANT SELECT ON SEQUENCES TO quant;
 -- ⚠️ NOT EXHAUSTIVE. Tables added after this point carry their own GRANT beside their DDL
 -- (see execution.fee_observations below). This block covers the three original tables only;
 -- reading it as the complete grant set is what produced the 2026-09-04 gap.
@@ -430,6 +438,15 @@ CREATE INDEX IF NOT EXISTS fee_observations_observed_at_idx
 --
 -- SELECT, INSERT only — matching execution.fills and execution.order_events, NOT
 -- execution.orders. Observations are evidence and the basis is an append-only dated series;
--- an observation that can be UPDATEd is not evidence. No sequence grant is needed: `id` is
--- GENERATED ALWAYS AS IDENTITY, whose sequence is internally linked and covered by INSERT.
+-- an observation that can be UPDATEd is not evidence.
+--
+-- 🔴 The SEQUENCE needs its own grant. ↻ This comment used to say "No sequence grant is needed:
+-- `id` is GENERATED ALWAYS AS IDENTITY, whose sequence is internally linked and covered by
+-- INSERT." That is true for the APPLICATION and false for `pg_dump`, which runs
+-- `SELECT last_value, is_called FROM execution.fee_observations_id_seq` and needs the privilege
+-- explicitly. The sentence was the active cause of #351: the EH9 nightly dump was denied, and
+-- AWS's real-money backup was empty for 12 nights (2026-09-06 → 09-17). Its two identity-typed
+-- siblings, fills and order_events, always had the grant, via the ALL SEQUENCES line above.
+-- `tests/test_schema_grants.py` enforces sequence coverage BY POSITION.
 GRANT SELECT, INSERT ON execution.fee_observations TO quant;
+GRANT SELECT ON SEQUENCE execution.fee_observations_id_seq TO quant;
