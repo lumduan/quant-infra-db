@@ -101,7 +101,17 @@ if [ -z "$FLOOR_GB" ]; then
   case "$RAW" in
     ''|*[!0-9]*) FLOOR_GB="$FLOOR_GB_FALLBACK"
                  FLOOR_SRC=" [floor FELL BACK to ${FLOOR_GB_FALLBACK} GB — could not read MIN_FREE_BYTES from ${PORING_LAB_SRC} at origin/main]" ;;
-    *)           FLOOR_GB="$RAW"; FLOOR_SRC="" ;;
+    *)           FLOOR_GB="$RAW"
+                 # 🔑 SAY WHICH COMMIT THE FLOOR CAME FROM, AND HOW OLD THAT REF IS. `origin/main`
+                 # is a LOCAL remote-tracking ref: it is a cached copy of the remote, and it only
+                 # moves when something runs `git fetch` in that clone. Reading it is therefore a
+                 # read of a copy, not of the remote — so staleness has to be VISIBLE in the
+                 # output, because a stale ref reads perfectly and answers with full authority.
+                 FLOOR_SHA=$(git -C "$PORING_LAB" log -1 --format=%h origin/main 2>/dev/null)
+                 FLOOR_AGE_D=$(( ( $(date +%s) - $(git -C "$PORING_LAB" log -1 --format=%ct origin/main 2>/dev/null || date +%s) ) / 86400 ))
+                 FLOOR_SRC=" floor=${FLOOR_GB}GB@${FLOOR_SHA:-?}(${FLOOR_AGE_D}d)"
+                 [ "${FLOOR_AGE_D:-0}" -ge 7 ] && FLOOR_SRC="${FLOOR_SRC} [⚠️ the floor's source ref is ${FLOOR_AGE_D}d old — nothing fetches poring-lab on a schedule, so this may not be the current floor]"
+                 ;;
   esac
 fi
 
@@ -186,7 +196,7 @@ else
 fi
 
 [ -n "$FORCE_HHMM" ] && FORCED="${FORCED} [FORCED CLOCK ${FORCE_HHMM} — not the real time]"
-FORCED="${FORCED}${FLOOR_SRC}"
+FORCED="${FORCED}${FLOOR_SRC}${DFW_SOURCE_NOTE:-}"
 MSG="[disk-floor] ${VERDICT} ${NOW_ICT} ICT${FORCED} — free=${FREE_GB} GB  pg_total=${PG_TOTAL} GiB (crypto ${PG_CRYPTO}, orderbook ${PG_OB})  next_retention_gives_back=${NEXT_DROP} GiB  phase=$([ "$POST" = 1 ] && echo post-retention || echo pre-retention) — ${WHY}"
 
 # --- 5. log BEFORE posting, so a dropped Slack post still leaves the text on disk -------------
