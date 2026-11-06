@@ -38,7 +38,9 @@
 #   AMBER into RED would page every afternoon on a condition that fixes itself, and folding it
 #   into GREEN would hide the approach. The sibling has no phase to be aware of.
 #
-# Usage:  ops/disk_floor_watch.sh [--floor-gb 120] [--margin-gb 5] [--no-slack] [--quiet]
+# Usage:  ops/disk_floor_watch.sh [--floor-gb N] [--margin-gb N] [--no-slack] [--quiet]
+#         (the floor DEFAULTS to whatever poring-lab's recorder enforces — see below; --floor-gb
+#          overrides it, which is for tests and for answering "what if" questions, not for daily use)
 #         ops/disk_floor_watch.sh --force-free-gb 118   # TEST ONLY: pretend df said this
 #         ops/disk_floor_watch.sh --force-hhmm 21:45     # TEST ONLY: pretend the clock said this
 #
@@ -49,8 +51,22 @@
 # =============================================================================================
 set -uo pipefail
 
-FLOOR_GB=120
-MARGIN_GB=5
+# 🔴 THE FLOOR IS NOT OURS AND IT MOVES. Do not hard-code it.
+# poring-lab's recorder owns it, declares it in code, and the operator has changed it TWICE in two
+# days: 140 GB -> 120 (2026-11-05) -> 100 (2026-11-06, commit 8b46640, ADR-0010 Amendment). A
+# checker that restates the number is wrong again within a day and says nothing when it is.
+# So this READS the number from the instrument that enforces it, and when it cannot, it falls back
+# AND SAYS IT FELL BACK — a silently-defaulted floor is worse than no floor, because the verdict
+# still looks authoritative. (The umbrella's rule: prefer a pointer to the instrument over a
+# restated measurement; the measurement belongs where it is produced.)
+PORING_LAB=/home/batt/docker/poring-lab
+PORING_LAB_SRC=scripts/dataset_ship.py
+FLOOR_GB_FALLBACK=100
+FLOOR_GB=""
+# 20 GB, justified on its own terms rather than inherited: one nightly give-back is 8.7-13.4 GiB,
+# so a 20 GB margin raises AMBER roughly one-and-a-half cycles before the floor — enough warning to
+# act inside a maintenance window. It is NOT 20 because 100+20 happens to be the previous floor.
+MARGIN_GB=20
 NO_SLACK=0
 QUIET=0
 FORCE_FREE=""
@@ -76,6 +92,28 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
+
+# --- 0. read the floor from the instrument that enforces it ------------------------------------
+FLOOR_SRC=""
+if [ -z "$FLOOR_GB" ]; then
+  RAW=$(git -C "$PORING_LAB" show "origin/main:$PORING_LAB_SRC" 2>/dev/null \
+        | sed -n 's/^MIN_FREE_BYTES[[:space:]]*=[[:space:]]*\([0-9]\+\)[[:space:]]*\*[[:space:]]*10\*\*9.*/\1/p' | head -1)
+  case "$RAW" in
+    ''|*[!0-9]*) FLOOR_GB="$FLOOR_GB_FALLBACK"
+                 FLOOR_SRC=" [floor FELL BACK to ${FLOOR_GB_FALLBACK} GB — could not read MIN_FREE_BYTES from ${PORING_LAB_SRC} at origin/main]" ;;
+    *)           FLOOR_GB="$RAW"
+                 # 🔑 SAY WHICH COMMIT THE FLOOR CAME FROM, AND HOW OLD THAT REF IS. `origin/main`
+                 # is a LOCAL remote-tracking ref: it is a cached copy of the remote, and it only
+                 # moves when something runs `git fetch` in that clone. Reading it is therefore a
+                 # read of a copy, not of the remote — so staleness has to be VISIBLE in the
+                 # output, because a stale ref reads perfectly and answers with full authority.
+                 FLOOR_SHA=$(git -C "$PORING_LAB" log -1 --format=%h origin/main 2>/dev/null)
+                 FLOOR_AGE_D=$(( ( $(date +%s) - $(git -C "$PORING_LAB" log -1 --format=%ct origin/main 2>/dev/null || date +%s) ) / 86400 ))
+                 FLOOR_SRC=" floor=${FLOOR_GB}GB@${FLOOR_SHA:-?}(${FLOOR_AGE_D}d)"
+                 [ "${FLOOR_AGE_D:-0}" -ge 7 ] && FLOOR_SRC="${FLOOR_SRC} [⚠️ the floor's source ref is ${FLOOR_AGE_D}d old — nothing fetches poring-lab on a schedule, so this may not be the current floor]"
+                 ;;
+  esac
+fi
 
 NOW_ICT=$(TZ=Asia/Bangkok date '+%Y-%m-%d %H:%M:%S')
 HHMM=$(TZ=Asia/Bangkok date '+%H:%M')
@@ -158,6 +196,7 @@ else
 fi
 
 [ -n "$FORCE_HHMM" ] && FORCED="${FORCED} [FORCED CLOCK ${FORCE_HHMM} — not the real time]"
+FORCED="${FORCED}${FLOOR_SRC}${DFW_SOURCE_NOTE:-}"
 MSG="[disk-floor] ${VERDICT} ${NOW_ICT} ICT${FORCED} — free=${FREE_GB} GB  pg_total=${PG_TOTAL} GiB (crypto ${PG_CRYPTO}, orderbook ${PG_OB})  next_retention_gives_back=${NEXT_DROP} GiB  phase=$([ "$POST" = 1 ] && echo post-retention || echo pre-retention) — ${WHY}"
 
 # --- 5. log BEFORE posting, so a dropped Slack post still leaves the text on disk -------------
@@ -171,11 +210,26 @@ printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null
 if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }; then
   # shellcheck disable=SC1091
   [ -f /home/batt/.config/quant-pm/env ] && . /home/batt/.config/quant-pm/env
+  # 🔑 THE POST RESULT IS CAPTURED AND LOGGED, and that is not a nicety. Until 2026-11-06 this
+  # discarded curl's output with `>/dev/null 2>&1 || true`, so the script could not tell whether
+  # the alarm had LEFT THE MACHINE. An alarm path that cannot confirm delivery has the same defect
+  # as an observer that reports "fine" when it could not look — and it has it at the only moment
+  # that matters. A failed or skipped post now says, in the log, that THE VERDICT WAS NOT
+  # DELIVERED, so a reader is never left inferring delivery from the verdict's presence.
   if [ -n "${PM_SLACK_WEBHOOK:-}" ]; then
-    # The webhook is a credential: passed by variable, never echoed, never in the log.
-    curl -s -m 10 -X POST -H 'Content-type: application/json' \
+    # The webhook is a credential: passed by variable, never echoed, never written to the log.
+    HTTP=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-type: application/json' \
       --data "$(printf '{"text":%s}' "$(printf '%s' "$MSG" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')")" \
-      "$PM_SLACK_WEBHOOK" >/dev/null 2>&1 || true
+      "$PM_SLACK_WEBHOOK" 2>/dev/null)
+    if [ "$HTTP" = "200" ]; then
+      printf '[post] status=ok HTTP 200 verdict=%s\n' "$VERDICT" >> "$LOG" 2>/dev/null
+    else
+      printf '[post] status=FAILED HTTP %s — the %s verdict above was NOT DELIVERED\n' \
+        "${HTTP:-none}" "$VERDICT" >> "$LOG" 2>/dev/null
+    fi
+  else
+    printf '[post] status=SKIPPED no PM_SLACK_WEBHOOK in the environment — the %s verdict above was NOT DELIVERED\n' \
+      "$VERDICT" >> "$LOG" 2>/dev/null
   fi
 fi
 
