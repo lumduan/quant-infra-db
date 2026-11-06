@@ -171,11 +171,26 @@ printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null
 if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }; then
   # shellcheck disable=SC1091
   [ -f /home/batt/.config/quant-pm/env ] && . /home/batt/.config/quant-pm/env
+  # 🔑 THE POST RESULT IS CAPTURED AND LOGGED, and that is not a nicety. Until 2026-11-06 this
+  # discarded curl's output with `>/dev/null 2>&1 || true`, so the script could not tell whether
+  # the alarm had LEFT THE MACHINE. An alarm path that cannot confirm delivery has the same defect
+  # as an observer that reports "fine" when it could not look — and it has it at the only moment
+  # that matters. A failed or skipped post now says, in the log, that THE VERDICT WAS NOT
+  # DELIVERED, so a reader is never left inferring delivery from the verdict's presence.
   if [ -n "${PM_SLACK_WEBHOOK:-}" ]; then
-    # The webhook is a credential: passed by variable, never echoed, never in the log.
-    curl -s -m 10 -X POST -H 'Content-type: application/json' \
+    # The webhook is a credential: passed by variable, never echoed, never written to the log.
+    HTTP=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-type: application/json' \
       --data "$(printf '{"text":%s}' "$(printf '%s' "$MSG" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')")" \
-      "$PM_SLACK_WEBHOOK" >/dev/null 2>&1 || true
+      "$PM_SLACK_WEBHOOK" 2>/dev/null)
+    if [ "$HTTP" = "200" ]; then
+      printf '[post] status=ok HTTP 200 verdict=%s\n' "$VERDICT" >> "$LOG" 2>/dev/null
+    else
+      printf '[post] status=FAILED HTTP %s — the %s verdict above was NOT DELIVERED\n' \
+        "${HTTP:-none}" "$VERDICT" >> "$LOG" 2>/dev/null
+    fi
+  else
+    printf '[post] status=SKIPPED no PM_SLACK_WEBHOOK in the environment — the %s verdict above was NOT DELIVERED\n' \
+      "$VERDICT" >> "$LOG" 2>/dev/null
   fi
 fi
 
