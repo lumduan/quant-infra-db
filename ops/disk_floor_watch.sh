@@ -162,7 +162,8 @@ fi
 NEXT_DROP=$(docker exec "$PG_CONTAINER" psql -U postgres -d db_crypto -At -X -q -c "
   WITH pol AS (
     SELECT (config->>'hypertable_id')::int htid, (config->>'drop_after')::interval drop_after
-    FROM timescaledb_information.jobs WHERE proc_name='policy_retention')
+    FROM timescaledb_information.jobs
+    WHERE proc_name='policy_retention' AND scheduled)   -- the AND is not optional; see below
   SELECT coalesce(round(sum(pg_total_relation_size(
            format('%I.%I', c.chunk_schema, c.chunk_name)))/1073741824.0, 3), 0)
   FROM timescaledb_information.chunks c
@@ -171,6 +172,21 @@ NEXT_DROP=$(docker exec "$PG_CONTAINER" psql -U postgres -d db_crypto -At -X -q 
   JOIN pol p ON p.htid=h.id
   WHERE c.range_end < now() - p.drop_after;" 2>/dev/null)
 [ -z "$NEXT_DROP" ] && NEXT_DROP="?"
+
+# 🔴 IS RETENTION EVEN ARMED? Until 2026-11-06 this script never asked, and the omission turned its
+# single most reassuring sentence into a falsehood. `timescaledb_information.jobs` lists PAUSED jobs
+# too, so after `alter_job(…, scheduled => false)` the give-back query still summed 8.667 GiB of
+# chunks that nothing was going to drop — and the phase logic then treated a dip as one the 21:07
+# run would heal. There was no 21:07 run.
+#
+# ⚠️ And the premise was removed BY ME, in the same session, two hours before this was noticed
+# (TK-0661 disarmed retention so the operator's "keep the data" ruling could not be violated by a
+# nightly drop). So the monitor was asserting a world its own operator had just changed. That is
+# why this now READS the arming instead of assuming it: a check must not out-live its premise.
+RET_ARMED=$(docker exec "$PG_CONTAINER" psql -U postgres -d db_crypto -At -X -q -c "
+  SELECT count(*) FROM timescaledb_information.jobs
+  WHERE proc_name='policy_retention' AND scheduled;" 2>/dev/null)
+case "$RET_ARMED" in ''|*[!0-9]*) RET_ARMED=-1 ;; esac
 
 # --- 4. the verdict, and it is PHASE-AWARE ----------------------------------------------------
 # `[[ "$HHMM" > "$POST_RETENTION_FROM" ]]` is a lexical compare on zero-padded HH:MM, which is
@@ -181,7 +197,25 @@ if [[ "$HHMM" > "$POST_RETENTION_FROM" ]]; then POST=1; fi
 BELOW_FLOOR=$(awk -v f="$FREE_GB" -v fl="$FLOOR_GB" 'BEGIN{print (f<fl)?1:0}')
 NEAR_FLOOR=$(awk -v f="$FREE_GB" -v fl="$FLOOR_GB" -v m="$MARGIN_GB" 'BEGIN{print (f<fl+m)?1:0}')
 
-if [ "$BELOW_FLOOR" = 1 ] && [ "$POST" = 1 ]; then
+if [ "$RET_ARMED" = 0 ]; then
+  # 🔑 NO RETENTION IS SCHEDULED, so "pre-retention" is not a phase — it is a RAMP. Nothing will
+  # heal a dip, and the self-healing branch below must not be reachable. Free space only falls.
+  PHASE_TXT="retention=DISARMED (no give-back is scheduled; db_crypto grows monotonically)"
+  if [ "$BELOW_FLOOR" = 1 ]; then
+    VERDICT=RED; CODE=3
+    WHY="free ${FREE_GB} GB is BELOW the ${FLOOR_GB} GB floor and NO retention job is scheduled, so NOTHING will give space back. This does not self-heal."
+  elif [ "$NEAR_FLOOR" = 1 ]; then
+    VERDICT=AMBER; CODE=2
+    WHY="free ${FREE_GB} GB is within ${MARGIN_GB} GB of the ${FLOOR_GB} GB floor and NO retention job is scheduled — the sawtooth is OFF, so this will not recover on its own."
+  else
+    VERDICT=GREEN; CODE=0
+    WHY="free ${FREE_GB} GB, clear of the ${FLOOR_GB} GB floor by more than ${MARGIN_GB} GB — but retention is DISARMED, so this only falls from here."
+  fi
+elif [ "$RET_ARMED" = -1 ]; then
+  VERDICT=UNKNOWN; CODE=1
+  PHASE_TXT="retention=UNREADABLE"
+  WHY="could not read whether db_crypto's retention is scheduled, so whether a dip would self-heal is UNKNOWN. An observer fails CLOSED: this is NOT 'fine'."
+elif [ "$BELOW_FLOOR" = 1 ] && [ "$POST" = 1 ]; then
   VERDICT=RED; CODE=3
   WHY="free ${FREE_GB} GB is BELOW the ${FLOOR_GB} GB floor AFTER the ${RETENTION_ICT_HHMM} retention has run — the nightly give-back no longer covers the daily inflow. This is the condition TK-0645's fix exists to end."
 elif [ "$BELOW_FLOOR" = 1 ]; then
@@ -197,7 +231,7 @@ fi
 
 [ -n "$FORCE_HHMM" ] && FORCED="${FORCED} [FORCED CLOCK ${FORCE_HHMM} — not the real time]"
 FORCED="${FORCED}${FLOOR_SRC}${DFW_SOURCE_NOTE:-}"
-MSG="[disk-floor] ${VERDICT} ${NOW_ICT} ICT${FORCED} — free=${FREE_GB} GB  pg_total=${PG_TOTAL} GiB (crypto ${PG_CRYPTO}, orderbook ${PG_OB})  next_retention_gives_back=${NEXT_DROP} GiB  phase=$([ "$POST" = 1 ] && echo post-retention || echo pre-retention) — ${WHY}"
+MSG="[disk-floor] ${VERDICT} ${NOW_ICT} ICT${FORCED} — free=${FREE_GB} GB  pg_total=${PG_TOTAL} GiB (crypto ${PG_CRYPTO}, orderbook ${PG_OB})  next_retention_gives_back=${NEXT_DROP} GiB  ${PHASE_TXT:-phase=$([ "$POST" = 1 ] && echo post-retention || echo pre-retention)} — ${WHY}"
 
 # --- 5. log BEFORE posting, so a dropped Slack post still leaves the text on disk -------------
 printf '%s\n' "$MSG" >> "$LOG" 2>/dev/null
@@ -205,8 +239,15 @@ printf '%s\n' "$MSG" >> "$LOG" 2>/dev/null
 
 # --- 6. Slack: RED always; otherwise only on a CHANGE of verdict ------------------------------
 # A daily "nothing wrong" is the alert fatigue DC-0007 is about, so a repeated GREEN is silent.
+# 🔴 THE STATE MUST NOT ADVANCE PAST A VERDICT WHOSE ANNOUNCEMENT FAILED (session:HA's review,
+# 2026-11-06). It used to be written here, BEFORE the post. So a non-RED verdict CHANGE whose post
+# failed was announced once, failed, and then never again: the next run compared against the
+# already-advanced state, saw "no change", and stayed silent. A missed alert, permanently, and
+# invisible — the state file said the job was done.
+# ⇒ the state now records THE LAST VERDICT SUCCESSFULLY ANNOUNCED (or simply observed, when no
+# announcement was due), so a failed post is RETRIED on the next run.
 PREV=$(cat "$STATE" 2>/dev/null)
-printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null
+POST_OK=1
 if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }; then
   # shellcheck disable=SC1091
   [ -f /home/batt/.config/quant-pm/env ] && . /home/batt/.config/quant-pm/env
@@ -224,13 +265,18 @@ if [ "$NO_SLACK" = 0 ] && { [ "$VERDICT" = RED ] || [ "$VERDICT" != "$PREV" ]; }
     if [ "$HTTP" = "200" ]; then
       printf '[post] status=ok HTTP 200 verdict=%s\n' "$VERDICT" >> "$LOG" 2>/dev/null
     else
-      printf '[post] status=FAILED HTTP %s — the %s verdict above was NOT DELIVERED\n' \
+      POST_OK=0
+      printf '[post] status=FAILED HTTP %s — the %s verdict above was NOT DELIVERED; the state is NOT advanced, so the next run RETRIES it\n' \
         "${HTTP:-none}" "$VERDICT" >> "$LOG" 2>/dev/null
     fi
   else
-    printf '[post] status=SKIPPED no PM_SLACK_WEBHOOK in the environment — the %s verdict above was NOT DELIVERED\n' \
+    POST_OK=0
+    printf '[post] status=SKIPPED no PM_SLACK_WEBHOOK in the environment — the %s verdict above was NOT DELIVERED; the state is NOT advanced, so the next run RETRIES it\n' \
       "$VERDICT" >> "$LOG" 2>/dev/null
   fi
 fi
+
+# Advance the state ONLY if nothing was owed, or what was owed got through.
+if [ "$POST_OK" = 1 ]; then printf '%s\n' "$VERDICT" > "$STATE" 2>/dev/null; fi
 
 exit "$CODE"
