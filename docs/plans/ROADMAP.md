@@ -233,9 +233,8 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 - [x] Test PostgreSQL via `psycopg2`:
   ```python
   import psycopg2
-  conn = psycopg2.connect(
-      "postgresql://postgres:<pass>@localhost:5432/db_csm_set"
-  )
+
+  conn = psycopg2.connect("postgresql://postgres:<pass>@localhost:5432/db_csm_set")
   cur = conn.cursor()
   cur.execute("SELECT version();")
   print(cur.fetchone())
@@ -243,6 +242,7 @@ on a shared Docker network `quant-network`, so every Strategy Service and the AP
 - [x] Test MongoDB via `pymongo`:
   ```python
   from pymongo import MongoClient
+
   client = MongoClient("mongodb://localhost:27017/")
   db = client.csm_logs
   db.backtest_results.insert_one({"test": "ok", "ts": "2026-05-05"})
