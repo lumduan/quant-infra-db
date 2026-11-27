@@ -33,17 +33,21 @@ settings = Settings()  # _env_file = ".env", _env_file_encoding = "utf-8"
 def csm_set_dsn(self) -> str:
     """Connection string for the db_csm_set database."""
 
+
 @property
 def gateway_dsn(self) -> str:
     """Connection string for the db_gateway database."""
+
 
 @property
 def market_data_dsn(self) -> str:
     """Connection string for the db_market_data database."""
 
+
 @property
 def execution_dsn(self) -> str:
     """Connection string for the db_execution database."""
+
 
 @property
 def mongo_uri(self) -> str:

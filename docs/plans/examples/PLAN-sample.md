@@ -506,7 +506,7 @@ All 25 WalkForwardGate unit tests pass with ruff and mypy clean. The notebook se
 class PortfolioState(BaseModel):
     asof: pd.Timestamp
     target_weights: dict[str, float]  # symbol → weight, sums ≤ 1.0
-    equity_fraction: float             # in [0, vol_scale_cap]
+    equity_fraction: float  # in [0, vol_scale_cap]
     regime: RegimeState
     breaker_state: CircuitBreakerState  # NORMAL | TRIPPED | RECOVERING
     journal: list[OverlayJournalEntry]
@@ -516,7 +516,7 @@ class PortfolioState(BaseModel):
 
 ```python
 class OverlayContext(BaseModel):
-    prices_window: pd.DataFrame    # Lookback window for vol / DD computations
+    prices_window: pd.DataFrame  # Lookback window for vol / DD computations
     volumes_window: pd.DataFrame
     index_prices_window: pd.Series
     sector_map: dict[str, str]
@@ -528,11 +528,11 @@ class OverlayContext(BaseModel):
 
 ```python
 class OverlayJournalEntry(BaseModel):
-    overlay: str                     # e.g. "VolScalingOverlay"
+    overlay: str  # e.g. "VolScalingOverlay"
     asof: pd.Timestamp
-    decision: str                    # human-readable
-    inputs: dict[str, float]         # numerical inputs to the decision
-    outputs: dict[str, float]        # what the overlay changed
+    decision: str  # human-readable
+    inputs: dict[str, float]  # numerical inputs to the decision
+    outputs: dict[str, float]  # what the overlay changed
 ```
 
 ### `Trade`
@@ -540,7 +540,7 @@ class OverlayJournalEntry(BaseModel):
 ```python
 class Trade(BaseModel):
     symbol: str
-    side: TradeSide                  # BUY | SELL | HOLD
+    side: TradeSide  # BUY | SELL | HOLD
     target_weight: float
     current_weight: float
     delta_weight: float
@@ -557,7 +557,7 @@ class Trade(BaseModel):
 ```python
 # New fields (in addition to Phase 3.9):
 weight_scheme: WeightScheme = WeightScheme.VOL_TARGET
-vol_scaling_enabled: bool = True   # FLIPPED from False
+vol_scaling_enabled: bool = True  # FLIPPED from False
 optimizer_config: OptimizerConfig | None = None
 vol_scaling_config: VolScalingConfig | None = None
 capacity_config: CapacityConfig | None = None
